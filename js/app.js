@@ -440,7 +440,6 @@ function screenProfile() {
       <button class="btn ghost" data-a="export-csv">Historial en CSV</button>
       <button class="btn ghost" data-a="export-json">Còpia de seguretat (.json)</button>
       <label class="btn line" for="importFile">Restaurar una còpia</label><input type="file" id="importFile" accept="application/json" hidden></div>
-    <div class="card"><span class="label">Aparença</span><div class="chips">${[['', 'Sistema'], ['light', 'Clar'], ['dark', 'Fosc']].map(([k, n]) => `<button class="chip" data-a="theme" data-v="${k}" aria-pressed="${(state.theme || '') === k}">${n}</button>`).join('')}</div></div>
     <div class="card">${ui.confirmReset ? `<p><b>Segur?</b> S'esborraran el pla i tots els registres d'aquest dispositiu.</p><div class="row"><button class="btn danger" data-a="reset-yes">Sí, esborra-ho tot</button><button class="btn ghost" data-a="reset-no">Cancel·la</button></div>` : '<button class="btn line" data-a="reset">Esborrar totes les dades</button>'}</div>
     <p class="small muted">Pacely és gratuïta i de codi obert. Els ritmes es calculen amb el model VDOT de Jack Daniels. No està afiliada a Runna ni a cap altra app. Si tens dolor que no desapareix en 48 h, para i consulta un professional.</p>`;
 }
@@ -619,13 +618,7 @@ async function saveRun() {
 
 // ---------- Router ----------
 const ui = { draft: null, confirmReset: false, syncing: false, runMsg: '', runConfirm: false, runCtl: null };
-function applyTheme() {
-  if (state.theme) document.documentElement.setAttribute('data-theme', state.theme);
-  else document.documentElement.removeAttribute('data-theme');
-}
-
 function render() {
-  applyTheme();
   if (!state.profile || ob) {
     if (!ob) ob = defaults();
     tabs(null); renderOnboarding(); return;
@@ -726,7 +719,6 @@ document.addEventListener('click', e => {
     case 'export-ics': exportIcs(); toast('Calendari descarregat'); break;
     case 'export-csv': exportCsv(); toast('CSV descarregat'); break;
     case 'export-json': download(`pacely-${TODAY}.json`, 'application/json', JSON.stringify(state, null, 2)); toast('Còpia descarregada'); break;
-    case 'theme': state.theme = v || undefined; save(); render(); break;
     case 'reset': ui.confirmReset = true; render(); break;
     case 'reset-no': ui.confirmReset = false; render(); break;
     case 'reset-yes': state = { logs: {}, moves: {} }; save(); ui.confirmReset = false; ob = null; location.hash = ''; render(); break;
