@@ -551,7 +551,7 @@ function screenRun(arg) {
       <div class="row between"><span class="mono" id="rTarget"></span><span class="mono" id="rLeft"></span></div>
       <div class="runbar"><i id="rBar"></i></div><p class="small muted" id="rNext"></p></div>
     <div class="runbig"><span class="label">Ritme actual</span><b id="rPace" class="mono">–</b></div>
-    <div class="hrrow"><div><span class="label">Pulsacions</span><b id="rHr" class="mono">–</b><span class="small muted" id="rHrAvg"></span></div><div id="rHrCtl"></div></div>
+    ${hrSupported() ? '<div class="hrrow"><div><span class="label">Pulsacions</span><b id="rHr" class="mono">–</b><span class="small muted" id="rHrAvg"></span></div><div id="rHrCtl"></div></div>' : ''}
     <div class="kv"><div><span class="label">Distància</span><b id="rDist">0,00</b></div><div><span class="label">Temps</span><b id="rTime">0:00</b></div><div><span class="label">Ritme mitjà</span><b id="rAvg">–</b></div></div>
     <p class="note warn" id="rMsg" hidden></p>
     <div class="stack" id="rCtl"></div>
@@ -589,15 +589,14 @@ function updateRun() {
   $('rTime').textContent = fmtTime(r.elapsed);
   $('rAvg').textContent = isFinite(r.avgPace()) ? fmtPace(r.avgPace()) : '–';
   $('rMsg').hidden = !ui.runMsg; $('rMsg').textContent = ui.runMsg || '';
-  $('rHr').textContent = HR.fresh ? HR.bpm : '–';
-  $('rHrAvg').textContent = r.s.hrN ? ` mitjana ${Math.round(r.s.hrSum / r.s.hrN)} · màx. ${r.s.hrMax}` : '';
-  const hk = hrSupported() ? HR.status : 'nobt';
-  if (ui.hrKey !== hk) {
+  const hk = $('rHr') ? HR.status : null;
+  if (hk) {
+    $('rHr').textContent = HR.fresh ? HR.bpm : '–';
+    $('rHrAvg').textContent = r.s.hrN ? ` mitjana ${Math.round(r.s.hrSum / r.s.hrN)} · màx. ${r.s.hrMax}` : '';
+  }
+  if (hk && ui.hrKey !== hk) {
     ui.hrKey = hk;
     $('rHrCtl').innerHTML = {
-      nobt: /iPhone|iPad/.test(navigator.userAgent)
-        ? '<span class="small muted">Safari no permet el Bluetooth. Obre Pacely amb l\'app gratuïta <b>Bluefy</b> per veure les pulsacions en directe; si no, arribaran després des de Polar Flow.</span>'
-        : '<span class="small muted">Aquest navegador no té Bluetooth. Fes servir Chrome; si no, les pulsacions arribaran després des de Polar Flow.</span>',
       off: '<button class="btn ghost sm" data-a="hr-connect">Connectar el Polar</button>',
       connecting: '<span class="small muted">Connectant…</span>',
       connected: `<span class="small">${esc(HR.name)}</span> <button class="btn ghost sm" data-a="hr-off">Treure</button>`,
