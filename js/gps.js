@@ -69,8 +69,8 @@ export const paceWords = sec => {
 
 // ---------- Gravadora ----------
 export class Recorder {
-  constructor({ sessionId = null, segments, title, onUpdate, onEvent }) {
-    Object.assign(this, { sessionId, segments, title, onUpdate, onEvent });
+  constructor({ sessionId = null, segments, title, onUpdate, onEvent, fuelEvery = 0 }) {
+    Object.assign(this, { sessionId, segments, title, onUpdate, onEvent, fuelEvery });
     this.s = { sessionId, title, startedAt: null, pts: [], dist: 0, moving: 0, paused: false, seg: 0, segD: 0, segT: 0, kmSaid: 0, lastAlert: 0, muted: false, hrSum: 0, hrN: 0, hrMax: 0, hrs: [] };
     this.watch = null; this.timer = null; this.lock = null; this.lastTick = 0; this.acc = null; this.lastFix = 0;
     this.hr = null; // font de pulsacions (HeartRate), opcional
@@ -150,6 +150,11 @@ export class Recorder {
     if (!this.s.paused) this.s.moving += now - this.lastTick;
     this.lastTick = now;
     if (!this.s.paused) this.checkSegment();
+    // Recordatori per menjar i beure a les sessions llargues
+    if (this.fuelEvery && !this.s.paused && this.s.startedAt) {
+      this.s.nextFuel ||= this.fuelEvery;
+      if (this.elapsed >= this.s.nextFuel) { this.s.nextFuel += this.fuelEvery; this.say('Moment de menjar un gel i beure una mica d\'aigua.'); }
+    }
     if (!this.s.paused && this.s.startedAt && this.hr?.fresh) {
       const b = this.hr.bpm;
       this.s.hrSum += b; this.s.hrN++; this.s.hrMax = Math.max(this.s.hrMax || 0, b);

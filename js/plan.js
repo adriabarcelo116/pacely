@@ -64,7 +64,7 @@ export function planFrame(profile) {
   return { startMon, race, n, taper, pre, phases, delayed };
 }
 
-function stepsKm(steps) {
+export function stepsKm(steps) {
   let km = 0;
   for (const s of steps) {
     if (s.k === 'rep') km += s.n * s.km + (s.n - 1) * ((s.recKm || 0) + (s.rec || 0) / 60 * 0.15);
@@ -209,6 +209,61 @@ function testSession(distM) {
     { k: 'run', km: k, z: 'TEST', label: `${k} km a fons en pla` },
     { k: 'cool', km: 1, z: 'E' },
   ], 'Registra el temps exacte: els ritmes de les setmanes següents es recalcularan.'), { distM });
+}
+
+// ---------- "No em trobo al 100%" ----------
+// Cada ajust: { kind: 'tired' | 'sick' | 'busy' | 'break', from, to } (dates ISO, inclusives)
+export const ADJUST_INFO = {
+  tired: { name: 'Estic cansat', help: 'Les sessions dures passen a rodatges suaus i la tirada llarga s\'escurça un 20 %.' },
+  sick: { name: 'Estic malalt o lesionat', help: 'Treu totes les sessions d\'aquests dies. Després, 3 dies només suaus.' },
+  busy: { name: 'Setmana complicada', help: 'Et quedes amb la tirada llarga i la sessió de qualitat més important. Fora rodatges i força.' },
+  break: { name: 'Torno d\'una aturada', help: 'Una setmana per tornar-hi: tot suau i un 30 % menys de quilòmetres.' },
+};
+const QUALITY = ['int', 'tempo', 'fartlek', 'hills', 'test'];
+
+function softened(s, frac, why) {
+  const km = Math.max(3, Math.round(s.km * frac));
+  return { ...s, type: 'easy', title: `Rodatge suau ${km} km`, steps: [{ k: 'run', km, z: 'E' }], km, adjusted: why, original: s.title,
+    note: `Abans: ${s.title}. ${why}` };
+}
+function shortened(s, frac, why) {
+  const steps = s.steps.map(st => (st.k === 'run' && st.z === 'E' ? { ...st, km: Math.max(2, Math.round(st.km * frac * 2) / 2) } : st));
+  const x = { ...s, steps, adjusted: why, original: s.title };
+  x.km = stepsKm(steps);
+  if (s.type === 'long') x.title = s.title.replace(/^Tirada llarga [\d,]+ km/, `Tirada llarga ${String(Math.round(x.km)).replace('.', ',')} km`);
+  x.note = `Escurçada per: ${why.toLowerCase()} ${s.note || ''}`.trim();
+  return x;
+}
+
+export function applyAdjustments(sessions, adjusts, logs) {
+  if (!adjusts.length) return sessions;
+  const out = [];
+  for (const s of sessions) {
+    if (logs[s.id] || s.type === 'race') { out.push(s); continue; }
+    let x = s, drop = false;
+    for (const a of adjusts) {
+      const inRange = x.date >= a.from && x.date <= a.to;
+      const after = a.kind === 'sick' && x.date > a.to && x.date <= iso(addDays(fromIso(a.to), 3));
+      const why = ADJUST_INFO[a.kind].name;
+      if (after && QUALITY.includes(x.type)) x = softened(x, 0.7, 'Tornes de estar malalt: avui només suau.');
+      if (!inRange) continue;
+      if (a.kind === 'sick') { drop = true; break; }
+      if (a.kind === 'tired' || a.kind === 'break') {
+        const frac = a.kind === 'break' ? 0.7 : 0.8;
+        if (QUALITY.includes(x.type)) x = softened(x, frac, `${why}: avui toca suau.`);
+        else if (x.km) x = shortened(x, frac, why);
+      }
+      if (a.kind === 'busy') {
+        if (x.type === 'easy' || x.type === 'strength' || x.type === 'mobility') { drop = true; break; }
+        if (x.type === 'tempo' || x.type === 'fartlek' || x.type === 'hills') {
+          // ens quedem només amb les sèries (o el test); el tempo passa a rodatge curt
+          x = softened(x, 0.6, 'Setmana complicada: una sessió curta i fàcil.');
+        }
+      }
+    }
+    if (!drop) out.push(x);
+  }
+  return out;
 }
 
 // ---------- Generació completa ----------
@@ -362,7 +417,8 @@ export function buildPlan(state, todayIso) {
       const to = state.moves?.[s.id];
       if (to && to >= wStartIso && to <= wEndIso) { s.movedFrom = s.date; s.date = to; }
     }
-    const visible = sessions.filter(s => s.date >= startIso).sort((a, b) => a.date.localeCompare(b.date) || (a.km ? -1 : 1));
+    const adjusted = applyAdjustments(sessions, state.adjust || [], logs);
+    const visible = adjusted.filter(s => s.date >= startIso).sort((a, b) => a.date.localeCompare(b.date) || (a.km ? -1 : 1));
 
     const runKm = visible.filter(s => s.km).reduce((a, s) => a + s.km, 0);
     weeks.push({ idx: w, start: wStartIso, end: wEndIso, phase, deload, isRaceWeek, vol: Math.round(runKm), vdot, zones: z, racePace, factor, sessions: visible, note: tw?.note || '' });

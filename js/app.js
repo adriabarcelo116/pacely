@@ -1,10 +1,11 @@
 import { vdotFrom, predict, zones, DIST, LEVEL_5K, fmtPace, fmtTime, parseTime } from './vdot.js';
-import { buildPlan, planFrame, PHASES, iso, fromIso, addDays, dow, monday, estSeconds } from './plan.js';
+import { buildPlan, planFrame, PHASES, iso, fromIso, addDays, dow, monday, estSeconds, stepsKm, ADJUST_INFO } from './plan.js';
 import { ROUTINES, ZONE_INFO, TYPE_INFO } from './library.js';
 import { connCfg, authUrl, handleRedirect, syncPolar, fetchBestEffort, parseActivityFile, matchActivities, logFor } from './sync.js';
 import { Recorder, buildSegments, toGpx } from './gps.js';
 import { HeartRate, hrSupported } from './hr.js';
 import { TEMPLATES } from './templates.js';
+import { briefing, fetchForecast, weatherAt, heatZones, raceSplits, LIBRARY, libraryItem } from './coach.js';
 
 // ---------- Estat ----------
 const KEY = 'pacely:v1';
@@ -60,6 +61,26 @@ async function finishImport() {
   }
   save(); render();
   return matched;
+}
+
+// ---------- Temps i calor ----------
+const runHour = () => state.settings?.runHour ?? 19;
+const wxFor = date => weatherAt(state.wx, date, runHour());
+async function refreshWx(force) {
+  if (!state.loc || ui.wxLoading) return;
+  if (!force && state.wx && Date.now() - state.wx.fetched < 3 * 3600e3) return;
+  ui.wxLoading = true;
+  try { state.wx = await fetchForecast(state.loc.lat, state.loc.lon); save(); render(); }
+  catch { /* sense connexió: ho tornarem a provar */ }
+  finally { ui.wxLoading = false; }
+}
+function enableHeat() {
+  if (!navigator.geolocation) { toast('Aquest navegador no pot saber on ets.'); return; }
+  navigator.geolocation.getCurrentPosition(
+    p => { state.loc = { lat: +p.coords.latitude.toFixed(2), lon: +p.coords.longitude.toFixed(2) }; save(); refreshWx(true); toast('Ajust per calor activat'); },
+    () => toast('Cal el permís d\'ubicació per saber quin temps farà.'),
+    { timeout: 15000, maximumAge: 3600e3 },
+  );
 }
 
 async function doSync(manual) {
@@ -232,7 +253,8 @@ function readObInputs() {
 // ---------- Components ----------
 function stepRows(s, z) {
   const zc = k => `var(--z-${k})`;
-  const pace = k => (k === 'TEST' ? 'a fons' : z[k] ? zr(z[k]) : '');
+  const kmh = r => `${(3600 / r[1]).toFixed(1).replace('.', ',')}–${(3600 / r[0]).toFixed(1).replace('.', ',')} km/h`;
+  const pace = k => (k === 'TEST' ? 'a fons' : z[k] ? (state.settings?.treadmill ? kmh(z[k]) : zr(z[k])) : '');
   return s.steps.map(st => {
     let txt, zone = st.z || 'E';
     if (st.k === 'warm') txt = `Escalfament ${kmTxt(st.km)} km fàcil${st.strides ? ` + ${st.strides} progressius` : ''}`;
@@ -301,7 +323,10 @@ function screenToday() {
     main = `<div class="card"><span class="label">Avui</span><h2>Dia de descans</h2><p class="muted">Recuperar també és entrenar. Camina, estira o fes mobilitat suau.</p>
       ${next ? `<a class="sess c-${TYPE_INFO[next.type].cls}" href="#s/${next.id}"><i class="bar"></i><span class="grow"><span class="t">Pròxima: ${esc(next.title)}</span><br><span class="meta">${fmtDate(next.date)}</span></span></a>` : ''}</div>`;
   }
-  if (!todays.some(s => s.km && !state.logs[s.id])) main += '<a class="btn line" href="#run/lliure">Cursa lliure amb GPS</a>';
+  const adj = (state.adjust || []).filter(a => a.to >= TODAY);
+  if (adj.length) main = `<a class="card" href="#ajust" style="text-decoration:none;color:inherit"><span class="label">Pla ajustat</span><p>${adj.map(a => `${ADJUST_INFO[a.kind].name} fins al ${fmtShort(a.to)}`).join(' · ')}. Toca per desfer-ho.</p></a>` + main;
+  main += `<div class="row">${!todays.some(s => s.km && !state.logs[s.id]) ? '<a class="btn line grow" href="#run/lliure">Cursa lliure</a>' : ''}<a class="btn line grow" href="#entrenos">Entrenaments</a></div>
+    <a class="btn ghost" href="#ajust">No em trobo al 100%</a>`;
   const live = RUN?.s.startedAt ? RUN.s : Recorder.pending();
   if (live) main = `<a class="card hero" href="#run/${live.sessionId || 'lliure'}" style="text-decoration:none"><span class="label">${RUN ? 'Cursa en marxa' : 'Tens una cursa a mitges'}</span><h2>${esc(live.title || 'Cursa')}</h2><p>${kmTxt(live.dist / 1000)} km · ${fmtTime(live.moving / 1000)} · toca per ${RUN ? 'tornar-hi' : 'continuar-la o desar-la'}</p></a>` + main;
 
@@ -352,14 +377,26 @@ function screenSession(id) {
   const ti = TYPE_INFO[s.type];
   const weekDays = Array.from({ length: 7 }, (_, i) => iso(addDays(fromIso(w.start), i))).filter(d => d >= state.profile.startDate);
   const r = ROUTINES[s.routine];
-  const est = isRun ? estSeconds(s, w.zones) : r.min * 60;
+  const wx = isRun && !log ? wxFor(s.date) : null;
+  const zz = wx?.pct ? heatZones(w.zones, wx.pct) : w.zones;
+  const est = isRun ? estSeconds(s, zz) : r.min * 60;
+  const daysAhead = Math.round((fromIso(s.date) - fromIso(TODAY)) / 864e5);
+  const heatCtl = !isRun || log || daysAhead < 0 ? ''
+    : !state.loc ? '<button class="btn ghost sm" data-a="heat-on">Ajustar els ritmes a la calor</button>'
+    : `<label class="row small"><span>Hora prevista de sortida</span><select id="runHour" style="width:auto;padding:6px 10px">${[7, 9, 12, 18, 20].map(h => `<option value="${h}" ${runHour() === h ? 'selected' : ''}>${h}:00</option>`).join('')}</select></label>
+       ${!wx ? `<p class="small muted">${daysAhead > 7 ? 'La previsió del temps arriba 7 dies abans.' : 'Carregant la previsió…'}</p>` : ''}`;
+  const brief = isRun && !log ? `<div class="card"><span class="label">Abans de sortir</span>${briefing(s, w, PLAN, state.logs, wx).map(t => `<p>${esc(t)}</p>`).join('')}${heatCtl}</div>` : '';
+  const goal = state.profile.goalSec || predict(PLAN.vdotNow, PLAN.dist.m);
+  const splits = s.type === 'race' && !log ? `<details class="card"><summary style="cursor:pointer"><b>Estratègia: temps de pas per a ${fmtTime(goal)}</b></summary>
+      <table class="table"><tr><th>Km</th><th>Ritme</th><th>Temps de pas</th></tr>${raceSplits(s.km, goal).map(x => `<tr><td>${String(x.km).replace('.', ',')}</td><td class="mono">${fmtPace(x.pace)}</td><td class="mono">${fmtTime(x.cum)}</td></tr>`).join('')}</table>
+      <p class="small muted">Els 2 primers km una mica més lents i els 3 últims una mica més ràpids. Si fa calor, afegeix-hi uns segons per km.</p></details>` : '';
 
   const draft = ui.draft?.id === s.id ? ui.draft : { id: s.id, status: log?.status || 'done', km: log?.km ?? (isRun ? s.km : ''), time: log?.sec ? fmtTime(log.sec) : '', rpe: log?.rpe || 0, notes: log?.notes || '' };
   ui.draft = draft;
 
   const content = isRun
     ? `<div class="kv"><div><span class="label">Distància</span><b>${kmTxt(s.km)} km</b></div><div><span class="label">Durada</span><b>${dur(est)}</b></div><div><span class="label">Setmana</span><b>${w.idx + 1}</b></div></div>
-       <div class="card"><span class="label">Estructura</span><div class="steps">${stepRows(s, w.zones)}</div>${s.note ? `<p class="small muted">${esc(s.note)}</p>` : ''}</div>`
+       <div class="card"><div class="row between"><span class="label">Estructura${wx?.pct ? ` · ritmes +${String(wx.pct).replace('.', ',')} % per calor` : ''}</span><button class="chip" data-a="treadmill" aria-pressed="${!!state.settings?.treadmill}" style="padding:4px 10px;font-size:0.8rem">Cinta (km/h)</button></div><div class="steps">${stepRows(s, zz)}</div>${s.note ? `<p class="small muted">${esc(s.note)}</p>` : ''}</div>`
     : `<div class="card"><p class="muted">${esc(r.focus)}</p>${s.note ? `<p class="small">${esc(s.note)}</p>` : ''}
         ${r.ex.map(e => `<div class="ex"><div class="row between"><b>${esc(e.n)}</b><span class="mono small">${esc(e.d)}</span></div><span class="small muted">${esc(e.h)}</span></div>`).join('')}</div>`;
 
@@ -379,9 +416,43 @@ function screenSession(id) {
       ${s.type === 'test' ? `<br><span class="small">${log.needsTime ? `Escriu el temps del tram de ${s.distM / 1000} km (sense escalfament) per recalcular els ritmes.` : `Temps del test: ${fmtTime(log.sec)}${log.actKey ? ` (millor ${s.distM / 1000} km dins la cursa, sense l'escalfament)` : ''}.`}</span>` : ''}</div>` : ''}
     ${isRun && !log ? `<a class="btn" href="#run/${s.id}">▶ Començar amb GPS</a>` : ''}
     ${log?.actKey && state.activities[log.actKey]?.track ? `<button class="btn ghost" data-a="gpx" data-v="${esc(log.actKey)}">Descarregar el recorregut (GPX)</button>` : ''}
+    ${brief}
     ${content}
+    ${splits}
     ${!log ? `<label class="field"><span>Moure-la a un altre dia d'aquesta setmana</span><select id="moveTo">${weekDays.map(d => `<option value="${d}" ${d === s.date ? 'selected' : ''}>${fmtDate(d)}</option>`).join('')}</select></label>` : ''}
     ${s.date <= TODAY || log ? form : `<p class="small muted">Podràs registrar-la el ${fmtDate(s.date)}.</p>`}`;
+}
+
+function screenAdjust() {
+  const k = ui.adjKind, days = ui.adjDays || 3;
+  const active = (state.adjust || []).map((a, i) => ({ ...a, i })).filter(a => a.to >= TODAY);
+  return `<div class="row"><a href="#avui" class="btn ghost sm">← Avui</a></div>
+    <div><h1>No em trobo al 100%</h1><p class="muted">Digues què passa i Pacely canviarà les sessions dels propers dies. Ho pots desfer quan vulguis.</p></div>
+    <div class="choices">${Object.entries(ADJUST_INFO).map(([key, i]) => `<button class="choice" data-a="adj-kind" data-v="${key}" aria-pressed="${k === key}"><b>${i.name}</b><span class="small muted">${i.help}</span></button>`).join('')}</div>
+    ${k && k !== 'break' ? `<div class="field"><span>Durant quants dies, a partir d'avui?</span><div class="chips">${[3, 5, 7, 14].map(n => `<button class="chip" data-a="adj-days" data-v="${n}" aria-pressed="${days === n}">${n} dies</button>`).join('')}</div></div>` : ''}
+    <button class="btn block" data-a="adj-apply" ${k ? '' : 'disabled'}>Ajustar el pla</button>
+    ${active.length ? `<div class="card"><span class="label">Ajustos actius</span>${active.map(a => `<div class="row between"><span>${ADJUST_INFO[a.kind].name} · fins al ${fmtShort(a.to)}</span><button class="btn ghost sm" data-a="adj-undo" data-v="${a.i}">Desfer</button></div>`).join('')}</div>` : ''}`;
+}
+
+function screenLibrary() {
+  const z = PLAN.current.zones;
+  const cats = [...new Set(LIBRARY.map(w => w.cat))];
+  return `${header('Entrenaments', 'Sessions soltes, guiades amb els teus ritmes')}
+    ${cats.map(c => `<div class="stack"><span class="label">${c}</span>${LIBRARY.filter(w => w.cat === c).map(w => `<a class="sess c-${TYPE_INFO[w.type].cls}" href="#e/${w.id}"><i class="bar"></i><span class="grow"><span class="t">${esc(w.name)}</span><br><span class="meta">${kmTxt(stepsKm(w.steps))} km · ${dur(estSeconds(w, z))} · ${esc(w.desc)}</span></span></a>`).join('')}</div>`).join('')}
+    <p class="small muted">Si en fas un el dia d'una sessió del pla, quedarà registrat en aquella sessió.</p>`;
+}
+
+function screenLibItem(id) {
+  const w = libraryItem(id);
+  if (!w) return '<div class="card"><h2>No trobem aquest entrenament</h2><a class="btn" href="#entrenos">Tornar</a></div>';
+  const wx = wxFor(TODAY);
+  const z = wx?.pct ? heatZones(PLAN.current.zones, wx.pct) : PLAN.current.zones;
+  const s = { ...w, title: w.name, km: stepsKm(w.steps) };
+  return `<div class="row"><a href="#entrenos" class="btn ghost sm">← Entrenaments</a></div>
+    <div><span class="pill acc">${esc(w.cat)}</span><h1 style="margin-top:8px">${esc(w.name)}</h1><p class="muted">${esc(w.desc)}</p></div>
+    <a class="btn" href="#run/${w.id}">▶ Començar amb GPS</a>
+    <div class="kv"><div><span class="label">Distància</span><b>${kmTxt(s.km)} km</b></div><div><span class="label">Durada</span><b>${dur(estSeconds(s, z))}</b></div><div><span class="label">Calor</span><b>${wx ? `${wx.t} °C` : '–'}</b></div></div>
+    <div class="card"><div class="row between"><span class="label">Estructura${wx?.pct ? ` · +${String(wx.pct).replace('.', ',')} % per calor` : ''}</span><button class="chip" data-a="treadmill" aria-pressed="${!!state.settings?.treadmill}" style="padding:4px 10px;font-size:0.8rem">Cinta (km/h)</button></div><div class="steps">${stepRows(s, z)}</div></div>`;
 }
 
 function screenStrength() {
@@ -529,15 +600,22 @@ function ensureRun(arg) {
   const pend = Recorder.pending();
   let sid = arg && arg !== 'lliure' ? arg : null;
   if (RUN?.s.startedAt) return RUN;
-  if (pend) sid = pend.sessionId || null;
-  if (RUN && (RUN.sessionId || null) === sid) return RUN;
+  if (pend) sid = pend.sessionId || pend.libId || null;
+  if (RUN && (RUN.sessionId || RUN.s.libId || null) === sid) return RUN;
   RUN?.stop();
-  const s = sid ? findSession(sid) : null;
+  // Sessió del pla, entrenament de la biblioteca o cursa lliure
+  const lib = sid?.startsWith('w-') ? libraryItem(sid) : null;
+  const s = lib ? { ...lib, title: lib.name, km: stepsKm(lib.steps), week: PLAN.current } : sid ? findSession(sid) : null;
+  const wx = s ? wxFor(lib ? TODAY : s.date) : null;
+  const zz = s ? (wx?.pct ? heatZones(s.week.zones, wx.pct) : s.week.zones) : null;
+  const long = s && (s.type === 'long' || estSeconds(s, zz) > 70 * 60);
   const opts = {
-    sessionId: s ? sid : null, segments: buildSegments(s?.km ? s : null, s?.week.zones), title: s ? s.title : 'Cursa lliure',
+    sessionId: s && !lib ? sid : null, segments: buildSegments(s?.km ? s : null, zz), title: s ? s.title : 'Cursa lliure',
+    fuelEvery: long ? 35 * 60 : 0,
     onUpdate: updateRun, onEvent: (kind, msg) => { ui.runMsg = msg; updateRun(); },
   };
   RUN = pend ? Recorder.restore(opts) : new Recorder(opts);
+  if (lib) RUN.s.libId = lib.id;
   RUN.hr = HR;
   if (RUN.s.startedAt) RUN.start(); else RUN.warmup();
   return RUN;
@@ -631,7 +709,7 @@ async function saveRun() {
 }
 
 // ---------- Router ----------
-const ui = { draft: null, confirmReset: false, syncing: false, runMsg: '', runConfirm: false, runCtl: null };
+const ui = { draft: null, confirmReset: false, syncing: false, runMsg: '', runConfirm: false, runCtl: null, adjKind: null, adjDays: 3, wxLoading: false };
 function applyTheme() {
   if (state.theme) document.documentElement.setAttribute('data-theme', state.theme);
   else document.documentElement.removeAttribute('data-theme');
@@ -644,12 +722,13 @@ function render() {
     tabs(null); renderOnboarding(); return;
   }
   computePlan();
+  refreshWx(false);
   const [route, arg] = (location.hash.slice(1) || 'avui').split('/');
-  const map = { avui: screenToday, pla: screenPlan, forca: screenStrength, historial: screenHistory, perfil: screenProfile, ritmes: screenZones };
-  const tab = route === 's' ? 'pla' : route === 'ritmes' ? 'avui' : route;
+  const map = { avui: screenToday, pla: screenPlan, forca: screenStrength, historial: screenHistory, perfil: screenProfile, ritmes: screenZones, ajust: screenAdjust, entrenos: screenLibrary };
+  const tab = { s: 'pla', e: 'pla', entrenos: 'pla', ritmes: 'avui', ajust: 'avui' }[route] || route;
   tabs(map[tab] ? tab : 'avui');
   document.body.classList.toggle('running', route === 'run');
-  const html = route === 'run' ? screenRun(arg) : route === 's' ? screenSession(arg) : (map[route] || screenToday)();
+  const html = route === 'run' ? screenRun(arg) : route === 's' ? screenSession(arg) : route === 'e' ? screenLibItem(arg) : (map[route] || screenToday)();
   app.innerHTML = `<div class="screen stack" style="gap:18px">${html}</div>`;
   if (route === 'pla') document.querySelector('details.week[open]')?.scrollIntoView({ block: 'center' });
 }
@@ -720,6 +799,18 @@ document.addEventListener('click', e => {
       location.href = authUrl(state); break;
     }
     case 'sync': doSync(true); break;
+    case 'heat-on': enableHeat(); break;
+    case 'treadmill': state.settings = { ...(state.settings || {}), treadmill: !state.settings?.treadmill }; save(); render(); break;
+    case 'adj-kind': ui.adjKind = v; render(); break;
+    case 'adj-days': ui.adjDays = +v; render(); break;
+    case 'adj-apply': {
+      const kind = ui.adjKind;
+      if (!kind) { toast('Tria com et trobes.'); break; }
+      const days = kind === 'break' ? 7 : ui.adjDays || 3;
+      (state.adjust ||= []).push({ kind, from: TODAY, to: iso(addDays(fromIso(TODAY), days - 1)), created: new Date().toISOString() });
+      save(); ui.adjKind = null; location.hash = '#avui'; toast('Pla ajustat. Mira els canvis a la setmana.'); break;
+    }
+    case 'adj-undo': state.adjust.splice(+v, 1); save(); render(); toast('Ajust desfet'); break;
     case 'run-start': ui.runMsg = ''; RUN?.start(); updateRun(); break;
     case 'run-pause': RUN?.pause(); break;
     case 'run-resume': RUN?.resume(); break;
@@ -772,6 +863,7 @@ document.addEventListener('change', e => {
   const t = e.target;
   if (ob && ['raceDate', 'resDist', 'longDay', 'mobility'].includes(t.id)) { readObInputs(); renderOnboarding(); }
   if (ob && ['resTime', 'goal'].includes(t.id)) { readObInputs(); renderOnboarding(); }
+  if (t.id === 'runHour') { state.settings = { ...(state.settings || {}), runHour: +t.value }; save(); render(); return; }
   if (t.id === 'moveTo') {
     const id = location.hash.split('/')[1];
     const s = findSession(id);
