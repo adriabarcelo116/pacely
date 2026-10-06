@@ -3,6 +3,7 @@
 // de manera que el que ja has fet decideix els ritmes i el volum de les setmanes següents.
 
 import { vdotFrom, predict, zones, DIST } from './vdot.js';
+import { TEMPLATES } from './templates.js';
 
 const pad = n => String(n).padStart(2, '0');
 export const iso = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
@@ -51,6 +52,12 @@ export function planFrame(profile) {
   let delayed = false;
   if (n > 26) { startMon = addDays(monday(race), -25 * 7); n = 26; delayed = true; }
   n = Math.max(1, n);
+  const tpl = TEMPLATES[profile.template];
+  if (tpl) {
+    const phases = Array.from({ length: n }, (_, w) => tpl.week(w).phase);
+    const taper = phases.filter(x => x === 'taper').length;
+    return { startMon, race, n, taper, pre: n - taper, phases, delayed, template: tpl };
+  }
   const taper = n <= 3 ? 1 : Math.min(TAPER[profile.distance], n - 2);
   const pre = n - taper;
   const phases = [...phaseLayout(pre), ...Array(taper).fill('taper')];
@@ -249,8 +256,9 @@ export function buildPlan(state, todayIso) {
       }
       vdot = nv; bumps = 0;
     }
+    const tw = frame.template ? frame.template.week(w) : null;
     const phase = frame.phases[w];
-    const deload = w < frame.pre && (w + 1) % 4 === 0 && w !== frame.pre - 1;
+    const deload = tw ? tw.deload : w < frame.pre && (w + 1) % 4 === 0 && w !== frame.pre - 1;
     const isRaceWeek = w === frame.n - 1;
     const wInPhase = frame.phases.slice(0, w).filter(x => x === phase).length;
 
@@ -274,7 +282,20 @@ export function buildPlan(state, todayIso) {
       sessions.push({ ...s, date, id: `${date}-${s.type}` });
     };
 
-    if (isRaceWeek) {
+    if (tw) {
+      // Pla preparat: sessions fixes. Si la setmana anterior ha anat malament, retallem els trams suaus.
+      for (const [d, s] of tw.items) {
+        if (!s.steps.length) { add(d, s); continue; }
+        const cut = factor < 1 && s.type !== 'race' && s.type !== 'test';
+        const steps = cut ? s.steps.map(st => (st.k === 'run' && st.z === 'E' ? { ...st, km: Math.max(2, Math.round(st.km * factor * 2) / 2) } : st)) : s.steps;
+        const x = Object.assign(mk(s.type, s.title, steps, s.note), s.distM ? { distM: s.distM } : {});
+        if (cut && x.km < stepsKm(s.steps)) {
+          if (s.type === 'long') x.title = x.title.replace(/^Tirada llarga [\d,]+ km/, `Tirada llarga ${String(x.km).replace('.', ',')} km`);
+          x.note = `Retallada a ${String(x.km).replace('.', ',')} km per com va anar la setmana anterior. ${s.note}`.trim();
+        }
+        add(d, x);
+      }
+    } else if (isRaceWeek) {
       const raceDow = dow(frame.race);
       const before = days.filter(d => d < raceDow - 1);
       const pre = before.slice(-2);
@@ -310,7 +331,8 @@ export function buildPlan(state, todayIso) {
       easyDays.forEach((d, i) => add(d, easySession(rest / easyDays.length, i === 0)));
     }
 
-    // Força i mobilitat
+    // Força i mobilitat (el pla preparat ja les porta)
+    if (!tw) {
     const runDaysThisWeek = new Set(sessions.map(s => dow(fromIso(s.date))));
     const lastDay = isRaceWeek ? dow(frame.race) : 7;
     let nStr = p.strength;
@@ -333,6 +355,7 @@ export function buildPlan(state, todayIso) {
       const d = ordered.find(x => !used.includes(x)) ?? p.longDay;
       add(d, { type: 'mobility', title: 'Mobilitat · 15 min', routine: 'M', steps: [], km: 0, note: d === p.longDay ? 'Just després de la tirada llarga.' : '' });
     }
+    }
 
     // Moure sessions (l'usuari pot canviar el dia dins la setmana)
     for (const s of sessions) {
@@ -342,7 +365,7 @@ export function buildPlan(state, todayIso) {
     const visible = sessions.filter(s => s.date >= startIso).sort((a, b) => a.date.localeCompare(b.date) || (a.km ? -1 : 1));
 
     const runKm = visible.filter(s => s.km).reduce((a, s) => a + s.km, 0);
-    weeks.push({ idx: w, start: wStartIso, end: wEndIso, phase, deload, isRaceWeek, vol: Math.round(runKm), vdot, zones: z, racePace, factor, sessions: visible });
+    weeks.push({ idx: w, start: wStartIso, end: wEndIso, phase, deload, isRaceWeek, vol: Math.round(runKm), vdot, zones: z, racePace, factor, sessions: visible, note: tw?.note || '' });
 
     // ---- Adaptació a partir del que has registrat aquesta setmana ----
     const runs = visible.filter(s => s.km);

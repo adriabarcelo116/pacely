@@ -4,6 +4,7 @@ import { ROUTINES, ZONE_INFO, TYPE_INFO } from './library.js';
 import { connCfg, authUrl, handleRedirect, syncPolar, fetchBestEffort, parseActivityFile, matchActivities, logFor } from './sync.js';
 import { Recorder, buildSegments, toGpx } from './gps.js';
 import { HeartRate, hrSupported } from './hr.js';
+import { TEMPLATES } from './templates.js';
 
 // ---------- Estat ----------
 const KEY = 'pacely:v1';
@@ -122,8 +123,10 @@ function renderOnboarding() {
       <input type="file" id="importFile" accept="application/json" hidden></div>
       <p class="small muted">Les dades es guarden només en aquest dispositiu. No cal compte.</p>`;
   } else if (ob.step === 1) {
+    const g = TEMPLATES.girona27;
     body = `${prog}<h1>Per a quina distància t'entrenes?</h1><div class="choices">
-      ${Object.entries(DIST).map(([k, d]) => `<button class="choice" data-a="ob-set" data-k="distance" data-v="${k}" aria-pressed="${ob.distance === k}"><b>${d.name}</b><span class="small muted">${{ '5k': 'Velocitat i primeres curses', '10k': 'Equilibri entre ritme i fons', '21k': 'La més popular: fons amb ritme', '42k': 'Paciència i quilòmetres', '50k': 'Fons llarg i alimentació' }[k]}</span></button>`).join('')}
+      <button class="choice" data-a="ob-template" data-v="girona27" aria-pressed="${ob.template === 'girona27'}"><span class="label">Pla preparat</span><b>${g.name}</b><span class="small muted">${g.desc}</span></button>
+      ${Object.entries(DIST).map(([k, d]) => `<button class="choice" data-a="ob-set" data-k="distance" data-v="${k}" aria-pressed="${!ob.template && ob.distance === k}"><b>${d.name}</b><span class="small muted">${{ '5k': 'Velocitat i primeres curses', '10k': 'Equilibri entre ritme i fons', '21k': 'La més popular: fons amb ritme', '42k': 'Paciència i quilòmetres', '50k': 'Fons llarg i alimentació' }[k]}</span></button>`).join('')}
       </div>${nav()}`;
   } else if (ob.step === 2) {
     const f = { ...ob, startDate: TODAY, days: ob.days, longDay: ob.longDay, distance: ob.distance };
@@ -184,7 +187,7 @@ function renderOnboarding() {
     const tmp = buildPlan({ profile: prof, logs: {}, moves: {} }, TODAY);
     const ph = Object.keys(PHASES).map(k => [k, tmp.frame.phases.filter(x => x === k).length]).filter(([, n]) => n);
     body = `${prog}<h1>El teu pla</h1>
-      <div class="card hero"><span class="label">${esc(prof.raceName || DIST[prof.distance].long)}</span>
+      <div class="card hero"><span class="label">${prof.template ? 'Pla preparat · ' : ''}${esc(prof.raceName || DIST[prof.distance].long)}</span>
         <h2>${tmp.frame.n} setmanes · ${DIST[prof.distance].name}</h2>
         <p>${fmtDate(iso(tmp.frame.race))}</p></div>
       <div class="kv"><div><span class="label">Dies</span><b>${prof.days.length}</b></div><div><span class="label">Pic setmanal</span><b>${Math.max(...tmp.weeks.map(w => w.vol))} km</b></div><div><span class="label">Predicció</span><b>${fmtTime(predict(tmp.vdotNow, DIST[prof.distance].m))}</b></div></div>
@@ -196,6 +199,15 @@ function renderOnboarding() {
 
 function obProfile() {
   const fit = obFitness();
+  const t = TEMPLATES[ob.template];
+  if (t) {
+    return {
+      template: t.id, distance: t.distance, raceDate: t.raceDate, raceName: t.raceName, weeks: t.weeks, startDate: t.startDate,
+      days: t.days, longDay: t.longDay, strength: t.strength, mobility: t.mobility,
+      level: ob.level, base: { distM: fit.distM, sec: fit.sec }, goalSec: parseTime(ob.goal) || null,
+      results: state.profile?.results || [], createdAt: state.profile?.createdAt || new Date().toISOString(),
+    };
+  }
   return {
     distance: ob.distance, raceDate: ob.hasRace ? ob.raceDate : null, raceName: ob.hasRace ? ob.raceName.trim() : '',
     weeks: ob.weeks, startDate: state.profile?.startDate && ob.keepStart ? state.profile.startDate : TODAY,
@@ -327,7 +339,7 @@ function screenPlan() {
       return `<details class="week" id="w${w.idx}" style="--ph:var(${PHASES[w.phase].color})" ${w.idx === cur ? 'open' : ''}>
         <summary><span class="wn">${w.idx + 1}</span><span class="grow"><b>${PHASES[w.phase].name}</b> ${w.deload ? '<span class="pill">Descàrrega</span>' : ''} ${w.idx === cur ? '<span class="pill acc">Ara</span>' : ''} ${w.isRaceWeek ? '<span class="pill sun">Cursa</span>' : ''}<br><span class="small muted">${fmtShort(w.start)} – ${fmtShort(w.end)}${w.factor < 1 ? ` · adaptada −${Math.round((1 - w.factor) * 100)} %` : ''}</span></span>
         <span class="small muted" style="text-align:right"><b class="mono" style="color:var(--ink)">${w.vol} km</b><br>${done}/${runs.length}</span></summary>
-        <div class="body">${w.sessions.map(s => sessRow(s, { date: true })).join('')}</div></details>`;
+        <div class="body">${w.sessions.map(s => sessRow(s, { date: true })).join('')}${w.note ? `<p class="small muted">${esc(w.note)}</p>` : ''}</div></details>`;
     }).join('')}</div>`;
 }
 
@@ -421,6 +433,7 @@ function screenProfile() {
   return `${header('Perfil')}
     <div class="card"><span class="label">El teu pla</span>
       <div class="row between"><span>Objectiu</span><b>${esc(p.raceName || DIST[p.distance].long)}</b></div>
+      ${p.template ? `<div class="row between"><span>Tipus</span><span class="pill acc">Pla preparat</span></div>` : ''}
       <div class="row between"><span>Data</span><span>${fmtDate(iso(PLAN.frame.race))}</span></div>
       <div class="row between"><span>Temps objectiu</span><span class="mono">${p.goalSec ? fmtTime(p.goalSec) : 'sense'}</span></div>
       <div class="row between"><span>Dies</span><span>${p.days.map(d => DAYS[d]).join(' · ')} (llarga: ${DAYS_LONG[p.longDay]})</span></div>
@@ -658,9 +671,19 @@ document.addEventListener('click', e => {
         toast('Pla creat. Som-hi!');
         return;
       }
-      ob.step++; renderOnboarding(); window.scrollTo(0, 0); break;
-    case 'ob-back': ob.step--; renderOnboarding(); break;
+      // El pla preparat ja té data i dies: de la distància passa a la forma, i de la forma al resum
+      ob.step = ob.template && ob.step === 1 ? 3 : ob.template && ob.step === 3 ? 5 : ob.step + 1;
+      renderOnboarding(); window.scrollTo(0, 0); break;
+    case 'ob-back':
+      ob.step = ob.template && ob.step === 5 ? 3 : ob.template && ob.step === 3 ? 1 : ob.step - 1;
+      renderOnboarding(); break;
+    case 'ob-template': {
+      const t = TEMPLATES[v];
+      Object.assign(ob, { template: t.id, distance: t.distance, hasRace: true, raceDate: t.raceDate, raceName: t.raceName, goal: ob.goal || '1:59:00' });
+      renderOnboarding(); break;
+    }
     case 'ob-set': {
+      if (k === 'distance') ob.template = null;
       let val = v;
       if (k === 'hasRace' || k === 'hasResult') val = v === '1';
       if (k === 'strength') val = +v;
@@ -719,7 +742,7 @@ document.addEventListener('click', e => {
       const rk = Object.keys(DIST).find(x => Math.abs(DIST[x].m - r.distM) < 1) || '5k';
       ob = { ...defaults(), step: 1, distance: p.distance, hasRace: !!p.raceDate, raceDate: p.raceDate || '', raceName: p.raceName || '', weeks: p.weeks || 12,
         level: p.level, hasResult: true, resDist: rk, resTime: fmtTime(r.sec), goal: p.goalSec ? fmtTime(p.goalSec) : '',
-        days: p.days, longDay: p.longDay, strength: p.strength, mobility: p.mobility, keepStart: true };
+        days: p.days, longDay: p.longDay, strength: p.strength, mobility: p.mobility, keepStart: true, template: p.template || null };
       render(); window.scrollTo(0, 0); break;
     }
     case 'del-result': state.profile.results.splice(+v, 1); save(); render(); toast('Resultat tret'); break;
