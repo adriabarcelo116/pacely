@@ -1,6 +1,6 @@
-﻿// Funciona sense connexió: serveix l'app des de la memòria cau i l'actualitza en segon pla.
-const CACHE = 'pacely-v4';
-const SHELL = ['./', './index.html', './styles.css', './manifest.webmanifest', './js/app.js', './js/plan.js', './js/vdot.js', './js/library.js', './js/sync.js', './js/config.js', './js/gps.js', './icons/icon.svg', './icons/icon-192.png', './icons/icon-512.png'];
+// Funciona sense connexió: serveix l'app des de la memòria cau i l'actualitza en segon pla.
+const CACHE = 'pacely-v5';
+const SHELL = ['./', './index.html', './styles.css', './manifest.webmanifest', './js/app.js', './js/plan.js', './js/vdot.js', './js/library.js', './js/sync.js', './js/config.js', './js/gps.js', './js/hr.js', './icons/icon.svg', './icons/icon-192.png', './icons/icon-512.png'];
 
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL)).then(() => self.skipWaiting()));

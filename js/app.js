@@ -3,6 +3,7 @@ import { buildPlan, planFrame, PHASES, iso, fromIso, addDays, dow, monday, estSe
 import { ROUTINES, ZONE_INFO, TYPE_INFO } from './library.js';
 import { connCfg, authUrl, handleRedirect, syncProvider, fetchBestEffort, parseActivityFile, matchActivities, logFor } from './sync.js';
 import { Recorder, buildSegments, toGpx } from './gps.js';
+import { HeartRate, hrSupported } from './hr.js';
 
 // ---------- Estat ----------
 const KEY = 'pacely:v1';
@@ -366,7 +367,7 @@ function screenSession(id) {
     <div><span class="pill ${s.type === 'race' ? 'sun' : 'acc'}">${ti.name}</span>
       <h1 style="margin-top:8px">${esc(s.title)}</h1>
       <p class="muted">${fmtDate(s.date)}${s.movedFrom ? ` · movida des del ${fmtDate(s.movedFrom)}` : ''}</p></div>
-    ${log?.source ? `<div class="note ok"><b>${srcLabel(log.source)}</b>${log.actName ? ` · ${esc(log.actName)}` : ''}<br>${kmTxt(log.km)} km · ${fmtTime(log.actSec || log.sec)}${log.km && (log.actSec || log.sec) ? ` · ${fmtPace((log.actSec || log.sec) / log.km)}/km` : ''}${log.hr ? ` · ${log.hr} ppm de mitjana` : ''}
+    ${log?.source ? `<div class="note ok"><b>${srcLabel(log.source)}</b>${log.actName ? ` · ${esc(log.actName)}` : ''}<br>${kmTxt(log.km)} km · ${fmtTime(log.actSec || log.sec)}${log.km && (log.actSec || log.sec) ? ` · ${fmtPace((log.actSec || log.sec) / log.km)}/km` : ''}${log.hr ? ` · ${log.hr} ppm de mitjana${log.hrMax ? `, màx. ${log.hrMax}` : ''}` : ''}
       ${s.type === 'test' ? `<br><span class="small">${log.needsTime ? `Escriu el temps del tram de ${s.distM / 1000} km (sense escalfament) per recalcular els ritmes.` : `Temps del test: ${fmtTime(log.sec)}${log.actKey ? ` (millor ${s.distM / 1000} km dins la cursa, sense l'escalfament)` : ''}.`}</span>` : ''}</div>` : ''}
     ${isRun && !log ? `<a class="btn" href="#run/${s.id}">▶ Començar amb GPS</a>` : ''}
     ${log?.actKey && state.activities[log.actKey]?.track ? `<button class="btn ghost" data-a="gpx" data-v="${esc(log.actKey)}">Descarregar el recorregut (GPX)</button>` : ''}
@@ -518,6 +519,8 @@ function exportCsv() {
 
 // ---------- Cursa amb GPS ----------
 let RUN = null;
+const HR = new HeartRate();
+HR.on(() => updateRun());
 
 function ensureRun(arg) {
   const pend = Recorder.pending();
@@ -532,13 +535,14 @@ function ensureRun(arg) {
     onUpdate: updateRun, onEvent: (kind, msg) => { ui.runMsg = msg; updateRun(); },
   };
   RUN = pend ? Recorder.restore(opts) : new Recorder(opts);
+  RUN.hr = HR;
   if (RUN.s.startedAt) RUN.start(); else RUN.warmup();
   return RUN;
 }
 
 function screenRun(arg) {
   const r = ensureRun(arg);
-  ui.runCtl = null;
+  ui.runCtl = null; ui.hrKey = null;
   setTimeout(updateRun, 0);
   return `<div class="run">
     <div class="row between"><a class="btn ghost sm" href="#avui">← Sortir</a><span class="pill" id="rGps">GPS…</span><button class="btn ghost sm" data-a="run-mute" id="rMute">Veu</button></div>
@@ -547,10 +551,18 @@ function screenRun(arg) {
       <div class="row between"><span class="mono" id="rTarget"></span><span class="mono" id="rLeft"></span></div>
       <div class="runbar"><i id="rBar"></i></div><p class="small muted" id="rNext"></p></div>
     <div class="runbig"><span class="label">Ritme actual</span><b id="rPace" class="mono">–</b></div>
+    <div class="hrrow"><div><span class="label">Pulsacions</span><b id="rHr" class="mono">–</b><span class="small muted" id="rHrAvg"></span></div><div id="rHrCtl"></div></div>
     <div class="kv"><div><span class="label">Distància</span><b id="rDist">0,00</b></div><div><span class="label">Temps</span><b id="rTime">0:00</b></div><div><span class="label">Ritme mitjà</span><b id="rAvg">–</b></div></div>
     <p class="note warn" id="rMsg" hidden></p>
     <div class="stack" id="rCtl"></div>
-    <p class="small muted">Mantén la pantalla encesa i Pacely oberta mentre corres: si bloqueges el mòbil, el navegador pot deixar de rebre el GPS. Si portes el Polar, no cal gravar amb el mòbil: la cursa arribarà sola.</p></div>`;
+    <p class="small muted">Mantén la pantalla encesa i Pacely oberta mentre corres: si bloqueges el mòbil, el navegador pot deixar de rebre el GPS. Si portes el Polar, no cal gravar amb el mòbil: la cursa arribarà sola.</p>
+    ${hrSupported() ? `<details class="small"><summary style="cursor:pointer">Com veure les pulsacions del Polar aquí</summary>
+      <ol style="margin:8px 0 0;padding-left:20px;display:grid;gap:4px">
+        <li>Al rellotge, entra a <b>Començar entrenament</b> i tria l'esport, però encara no comencis.</li>
+        <li>Obre el menú ràpid (botó LIGHT o la icona) i tria <b>Share HR with other device</b> (Compartir FC amb un altre dispositiu).</li>
+        <li>Aquí, toca <b>Connectar el Polar</b> i tria el rellotge de la llista.</li>
+        <li>Comença l'entrenament al rellotge i la cursa a Pacely.</li>
+      </ol></details>` : ''}</div>`;
 }
 
 function updateRun() {
@@ -577,6 +589,20 @@ function updateRun() {
   $('rTime').textContent = fmtTime(r.elapsed);
   $('rAvg').textContent = isFinite(r.avgPace()) ? fmtPace(r.avgPace()) : '–';
   $('rMsg').hidden = !ui.runMsg; $('rMsg').textContent = ui.runMsg || '';
+  $('rHr').textContent = HR.fresh ? HR.bpm : '–';
+  $('rHrAvg').textContent = r.s.hrN ? ` mitjana ${Math.round(r.s.hrSum / r.s.hrN)} · màx. ${r.s.hrMax}` : '';
+  const hk = hrSupported() ? HR.status : 'nobt';
+  if (ui.hrKey !== hk) {
+    ui.hrKey = hk;
+    $('rHrCtl').innerHTML = {
+      nobt: '<span class="small muted">Aquest navegador no té Bluetooth (a l\'iPhone no és possible). Les pulsacions arribaran després des de Polar Flow.</span>',
+      off: '<button class="btn ghost sm" data-a="hr-connect">Connectar el Polar</button>',
+      connecting: '<span class="small muted">Connectant…</span>',
+      connected: `<span class="small">${esc(HR.name)}</span> <button class="btn ghost sm" data-a="hr-off">Treure</button>`,
+      reconnecting: '<span class="small muted">Senyal perdut, reconnectant…</span>',
+      lost: '<button class="btn ghost sm" data-a="hr-connect">Tornar a connectar</button>',
+    }[hk];
+  }
   const key = ui.runConfirm ? 'confirm' : !r.s.startedAt ? 'ready' : r.s.paused ? 'paused' : `run-${sg.kind === 'open'}`;
   if (ui.runCtl === key) return;
   ui.runCtl = key;
@@ -688,6 +714,11 @@ document.addEventListener('click', e => {
     case 'run-finish': ui.runConfirm = true; updateRun(); break;
     case 'run-back': ui.runConfirm = false; updateRun(); break;
     case 'run-save': saveRun(); break;
+    case 'hr-connect':
+      HR.connect().then(ok => { if (ok) { ui.runMsg = ''; toast(`Pulsacions connectades: ${HR.name}`); } })
+        .catch(err => { ui.runMsg = err.message; updateRun(); });
+      break;
+    case 'hr-off': HR.disconnect(); break;
     case 'run-discard': RUN?.finish(); Recorder.discard(); RUN = null; ui.runConfirm = false; ui.runMsg = ''; location.hash = '#avui'; toast('Cursa descartada'); break;
     case 'gpx': { const a = state.activities[v]; if (a) download(`pacely-${a.date}.gpx`, 'application/gpx+xml', toGpx(a)); break; }
     case 'disconnect': delete state[v]; save(); render(); toast(`${SRC[v]} desconnectat`); break;

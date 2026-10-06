@@ -71,8 +71,9 @@ export const paceWords = sec => {
 export class Recorder {
   constructor({ sessionId = null, segments, title, onUpdate, onEvent }) {
     Object.assign(this, { sessionId, segments, title, onUpdate, onEvent });
-    this.s = { sessionId, title, startedAt: null, pts: [], dist: 0, moving: 0, paused: false, seg: 0, segD: 0, segT: 0, kmSaid: 0, lastAlert: 0, muted: false };
+    this.s = { sessionId, title, startedAt: null, pts: [], dist: 0, moving: 0, paused: false, seg: 0, segD: 0, segT: 0, kmSaid: 0, lastAlert: 0, muted: false, hrSum: 0, hrN: 0, hrMax: 0, hrs: [] };
     this.watch = null; this.timer = null; this.lock = null; this.lastTick = 0; this.acc = null; this.lastFix = 0;
+    this.hr = null; // font de pulsacions (HeartRate), opcional
   }
 
   static restore(opts) {
@@ -83,6 +84,7 @@ export class Recorder {
       saved.pts = (saved.pts || []).map(p => { const q = p.slice(0, 3); if (p[3]) q.gap = true; return q; });
       // el temps amb l'app tancada no compta: queda en pausa fins que l'usuari continua
       saved.paused = true;
+      saved.hrs ||= []; saved.hrSum ||= 0; saved.hrN ||= 0; saved.hrMax ||= 0;
       if (saved.pts.length) saved.pts[saved.pts.length - 1].gap = true;
       r.s = saved;
       return r;
@@ -148,6 +150,12 @@ export class Recorder {
     if (!this.s.paused) this.s.moving += now - this.lastTick;
     this.lastTick = now;
     if (!this.s.paused) this.checkSegment();
+    if (!this.s.paused && this.s.startedAt && this.hr?.fresh) {
+      const b = this.hr.bpm;
+      this.s.hrSum += b; this.s.hrN++; this.s.hrMax = Math.max(this.s.hrMax || 0, b);
+      const t = Math.round(this.elapsed);
+      if (!this.s.hrs.length || t - this.s.hrs[this.s.hrs.length - 1][0] >= 5) this.s.hrs.push([t, b]);
+    }
     this.checkKm(); this.checkPace();
     if (now % 10000 < 1000) this.persist();
     this.onUpdate?.();
@@ -196,7 +204,10 @@ export class Recorder {
 
   checkKm() {
     const k = Math.floor(this.s.dist / 1000);
-    if (k > this.s.kmSaid) { this.s.kmSaid = k; this.say(`Quilòmetre ${k}. Ritme mitjà ${paceWords(this.avgPace())}.`); }
+    if (k > this.s.kmSaid) {
+      this.s.kmSaid = k;
+      this.say(`Quilòmetre ${k}. Ritme mitjà ${paceWords(this.avgPace())}.${this.hr?.fresh ? ` Pulsacions ${this.hr.bpm}.` : ''}`);
+    }
   }
 
   checkPace() {
@@ -247,7 +258,8 @@ export class Recorder {
     return {
       key: `gps:${this.s.startedAt}`, source: 'gps', extId: this.s.startedAt, name: this.title || 'Cursa amb GPS', date,
       start: start.toISOString(), km: Math.round(this.s.dist / 10) / 100, sec: Math.round(this.elapsed), elapsed: Math.round((Date.now() - this.s.startedAt) / 1000),
-      hr: null, points: slim, track, sessionId: this.sessionId,
+      hr: this.s.hrN ? Math.round(this.s.hrSum / this.s.hrN) : null, hrMax: this.s.hrMax || null, hrs: this.s.hrs || [],
+      points: slim, track, sessionId: this.sessionId,
     };
   }
 }

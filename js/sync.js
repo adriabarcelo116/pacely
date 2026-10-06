@@ -218,7 +218,7 @@ export function logFor(s, a) {
   return {
     id: s.id, date: s.date, type: s.type, title: s.title, status: 'done', km: a.km,
     sec: s.type === 'test' ? null : isRace ? a.elapsed : a.sec, actSec: a.sec,
-    rpe: null, notes: '', distM: s.distM || null, targetKm: s.km, hr: a.hr,
+    rpe: null, notes: '', distM: s.distM || null, targetKm: s.km, hr: a.hr, hrMax: a.hrMax || null,
     source: a.source, actKey: a.key, actName: a.name, needsRpe: true, needsTime: s.type === 'test',
     savedAt: new Date().toISOString(),
   };

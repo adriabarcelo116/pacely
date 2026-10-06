@@ -190,6 +190,11 @@ body.running { padding-bottom: env(safe-area-inset-bottom, 0px); }
 .runbig b { display: block; font-family: var(--mono); font-size: clamp(3.4rem, 18vw, 5rem); line-height: 1.05; font-variant-numeric: tabular-nums; }
 .runbar { height: 8px; border-radius: 8px; background: var(--surface-2); overflow: hidden; }
 .runbar i { display: block; height: 100%; width: 0; background: var(--accent); border-radius: 8px; transition: width 0.8s linear; }
+.hrrow { display: flex; justify-content: space-between; align-items: center; gap: 12px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); padding: 12px 14px; }
+.hrrow > div:first-child { min-width: 0; }
+.hrrow .label { display: block; }
+.hrrow b { font-family: var(--mono); font-size: 1.8rem; color: var(--z-I); margin-right: 6px; }
+.hrrow #rHrCtl { text-align: right; max-width: 60%; }
 .run .kv b { font-family: var(--mono); font-size: 1.15rem; }
 .toast { position: fixed; left: 50%; bottom: calc(90px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); background: var(--ink); color: var(--bg); padding: 10px 16px; border-radius: 16px; font-weight: 600; z-index: 20; text-align: center; max-width: calc(100% - 32px); }
 .table { width: 100%; border-collapse: collapse; font-size: 0.92rem; }
