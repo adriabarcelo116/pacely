@@ -595,7 +595,9 @@ function updateRun() {
   if (ui.hrKey !== hk) {
     ui.hrKey = hk;
     $('rHrCtl').innerHTML = {
-      nobt: '<span class="small muted">Aquest navegador no té Bluetooth (a l\'iPhone no és possible). Les pulsacions arribaran després des de Polar Flow.</span>',
+      nobt: /iPhone|iPad/.test(navigator.userAgent)
+        ? '<span class="small muted">Safari no permet el Bluetooth. Obre Pacely amb l\'app gratuïta <b>Bluefy</b> per veure les pulsacions en directe; si no, arribaran després des de Polar Flow.</span>'
+        : '<span class="small muted">Aquest navegador no té Bluetooth. Fes servir Chrome; si no, les pulsacions arribaran després des de Polar Flow.</span>',
       off: '<button class="btn ghost sm" data-a="hr-connect">Connectar el Polar</button>',
       connecting: '<span class="small muted">Connectant…</span>',
       connected: `<span class="small">${esc(HR.name)}</span> <button class="btn ghost sm" data-a="hr-off">Treure</button>`,
