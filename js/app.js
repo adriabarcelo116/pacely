@@ -1,7 +1,8 @@
 import { vdotFrom, predict, zones, DIST, LEVEL_5K, fmtPace, fmtTime, parseTime } from './vdot.js';
 import { buildPlan, planFrame, PHASES, iso, fromIso, addDays, dow, monday, estSeconds } from './plan.js';
 import { ROUTINES, ZONE_INFO, TYPE_INFO } from './library.js';
-import { connCfg, authUrl, handleRedirect, syncProvider, fetchBestEffort, parseActivityFile, matchActivities } from './sync.js';
+import { connCfg, authUrl, handleRedirect, syncProvider, fetchBestEffort, parseActivityFile, matchActivities, logFor } from './sync.js';
+import { Recorder, buildSegments, toGpx } from './gps.js';
 
 // ---------- Estat ----------
 const KEY = 'pacely:v1';
@@ -41,7 +42,8 @@ function toast(msg) {
 }
 
 // ---------- Sincronització ----------
-const SRC = { polar: 'Polar Flow', strava: 'Strava', file: 'fitxer' };
+const SRC = { polar: 'Polar Flow', strava: 'Strava', file: 'fitxer', gps: 'GPS del mòbil' };
+const srcLabel = src => (src === 'gps' ? 'Gravada amb el GPS del mòbil' : `Importada de ${SRC[src] || 'fora'}`);
 const PROVIDERS = ['polar', 'strava'];
 const connected = () => PROVIDERS.filter(p => state[p]);
 
@@ -283,15 +285,19 @@ function screenToday() {
       const log = state.logs[s.id];
       return `<div class="card ${s.km && !log ? 'hero' : ''}"><span class="label">Avui · ${TYPE_INFO[s.type].name}</span><h2>${esc(s.title)}</h2>
         ${s.km ? `<p>${kmTxt(s.km)} km · uns ${dur(estSeconds(s, w.zones))}</p>` : `<p>${ROUTINES[s.routine].min} min</p>`}
-        <a class="btn ${log ? 'ghost' : ''}" href="#s/${s.id}">${log ? (log.status === 'done' ? 'Feta ✓ · veure' : 'Saltada · veure') : 'Veure la sessió'}</a></div>`;
+        ${s.km && !log ? `<a class="btn" href="#run/${s.id}">▶ Començar amb GPS</a>` : ''}
+        <a class="btn ${log || s.km ? 'ghost' : ''}" href="#s/${s.id}">${log ? (log.status === 'done' ? 'Feta ✓ · veure' : 'Saltada · veure') : 'Veure la sessió'}</a></div>`;
     }).join('');
   } else {
     main = `<div class="card"><span class="label">Avui</span><h2>Dia de descans</h2><p class="muted">Recuperar també és entrenar. Camina, estira o fes mobilitat suau.</p>
       ${next ? `<a class="sess c-${TYPE_INFO[next.type].cls}" href="#s/${next.id}"><i class="bar"></i><span class="grow"><span class="t">Pròxima: ${esc(next.title)}</span><br><span class="meta">${fmtDate(next.date)}</span></span></a>` : ''}</div>`;
   }
+  if (!todays.some(s => s.km && !state.logs[s.id])) main += '<a class="btn line" href="#run/lliure">Cursa lliure amb GPS</a>';
+  const live = RUN?.s.startedAt ? RUN.s : Recorder.pending();
+  if (live) main = `<a class="card hero" href="#run/${live.sessionId || 'lliure'}" style="text-decoration:none"><span class="label">${RUN ? 'Cursa en marxa' : 'Tens una cursa a mitges'}</span><h2>${esc(live.title || 'Cursa')}</h2><p>${kmTxt(live.dist / 1000)} km · ${fmtTime(live.moving / 1000)} · toca per ${RUN ? 'tornar-hi' : 'continuar-la o desar-la'}</p></a>` + main;
 
   const pending = Object.values(state.logs).filter(l => (l.needsRpe || l.needsTime) && l.date <= TODAY && l.date >= iso(addDays(fromIso(TODAY), -21))).sort((a, b) => b.date.localeCompare(a.date));
-  const pendingHtml = pending.map(l => `<div class="card"><div class="row between"><span class="label">Importada de ${SRC[l.source] || 'fora'}</span><span class="small muted">${fmtShort(l.date)}</span></div>
+  const pendingHtml = pending.map(l => `<div class="card"><div class="row between"><span class="label">${srcLabel(l.source)}</span><span class="small muted">${fmtShort(l.date)}</span></div>
       <a href="#s/${l.id}" style="color:inherit;text-decoration:none"><h3>${esc(l.title)}</h3><p class="small muted">${kmTxt(l.km)} km · ${fmtTime(l.actSec || l.sec)}${l.km && (l.actSec || l.sec) ? ` · ${fmtPace((l.actSec || l.sec) / l.km)}/km` : ''}${l.hr ? ` · ${l.hr} ppm` : ''}</p></a>
       ${l.needsTime ? `<a class="btn sm" href="#s/${l.id}">Escriu el temps del test</a>` : ''}
       ${l.needsRpe ? `<span class="small">Com t'has trobat? (1 molt fàcil – 10 màxim)</span><div class="rpe">${Array.from({ length: 10 }, (_, i) => `<button data-a="quick-rpe" data-id="${l.id}" data-v="${i + 1}">${i + 1}</button>`).join('')}</div>` : ''}</div>`).join('');
@@ -360,8 +366,10 @@ function screenSession(id) {
     <div><span class="pill ${s.type === 'race' ? 'sun' : 'acc'}">${ti.name}</span>
       <h1 style="margin-top:8px">${esc(s.title)}</h1>
       <p class="muted">${fmtDate(s.date)}${s.movedFrom ? ` · movida des del ${fmtDate(s.movedFrom)}` : ''}</p></div>
-    ${log?.source ? `<div class="note ok"><b>Importada de ${SRC[log.source]}</b>${log.actName ? ` · ${esc(log.actName)}` : ''}<br>${kmTxt(log.km)} km · ${fmtTime(log.actSec || log.sec)}${log.km && (log.actSec || log.sec) ? ` · ${fmtPace((log.actSec || log.sec) / log.km)}/km` : ''}${log.hr ? ` · ${log.hr} ppm de mitjana` : ''}
+    ${log?.source ? `<div class="note ok"><b>${srcLabel(log.source)}</b>${log.actName ? ` · ${esc(log.actName)}` : ''}<br>${kmTxt(log.km)} km · ${fmtTime(log.actSec || log.sec)}${log.km && (log.actSec || log.sec) ? ` · ${fmtPace((log.actSec || log.sec) / log.km)}/km` : ''}${log.hr ? ` · ${log.hr} ppm de mitjana` : ''}
       ${s.type === 'test' ? `<br><span class="small">${log.needsTime ? `Escriu el temps del tram de ${s.distM / 1000} km (sense escalfament) per recalcular els ritmes.` : `Temps del test: ${fmtTime(log.sec)}${log.actKey ? ` (millor ${s.distM / 1000} km dins la cursa, sense l'escalfament)` : ''}.`}</span>` : ''}</div>` : ''}
+    ${isRun && !log ? `<a class="btn" href="#run/${s.id}">▶ Començar amb GPS</a>` : ''}
+    ${log?.actKey && state.activities[log.actKey]?.track ? `<button class="btn ghost" data-a="gpx" data-v="${esc(log.actKey)}">Descarregar el recorregut (GPX)</button>` : ''}
     ${content}
     ${!log ? `<label class="field"><span>Moure-la a un altre dia d'aquesta setmana</span><select id="moveTo">${weekDays.map(d => `<option value="${d}" ${d === s.date ? 'selected' : ''}>${fmtDate(d)}</option>`).join('')}</select></label>` : ''}
     ${s.date <= TODAY || log ? form : `<p class="small muted">Podràs registrar-la el ${fmtDate(s.date)}.</p>`}`;
@@ -380,7 +388,7 @@ function screenHistory() {
   const logs = Object.values(state.logs).sort((a, b) => b.date.localeCompare(a.date));
   const runLogs = logs.filter(l => RUN_TYPES.includes(l.type) && l.status === 'done');
   const linked = new Set(logs.map(l => l.actKey).filter(Boolean));
-  const extras = Object.values(state.activities || {}).filter(a => !linked.has(a.key)).sort((a, b) => b.date.localeCompare(a.date));
+  const extras = Object.values(state.activities || {}).filter(a => !linked.has(a.key) && !a.dupOf).sort((a, b) => b.date.localeCompare(a.date));
   const totKm = runLogs.reduce((a, l) => a + (+l.km || 0), 0) + extras.reduce((a, x) => a + x.km, 0);
   const totSec = runLogs.reduce((a, l) => a + (l.actSec || l.sec || 0), 0) + extras.reduce((a, x) => a + x.sec, 0);
   const past = allSessions().filter(s => s.km && s.date <= TODAY);
@@ -508,8 +516,92 @@ function exportCsv() {
   download('pacely-historial.csv', 'text/csv', rows.map(r => r.map(c => `"${String(c).replace(/"/g, '""')}"`).join(';')).join('\n'));
 }
 
+// ---------- Cursa amb GPS ----------
+let RUN = null;
+
+function ensureRun(arg) {
+  const pend = Recorder.pending();
+  let sid = arg && arg !== 'lliure' ? arg : null;
+  if (RUN?.s.startedAt) return RUN;
+  if (pend) sid = pend.sessionId || null;
+  if (RUN && (RUN.sessionId || null) === sid) return RUN;
+  RUN?.stop();
+  const s = sid ? findSession(sid) : null;
+  const opts = {
+    sessionId: s ? sid : null, segments: buildSegments(s?.km ? s : null, s?.week.zones), title: s ? s.title : 'Cursa lliure',
+    onUpdate: updateRun, onEvent: (kind, msg) => { ui.runMsg = msg; updateRun(); },
+  };
+  RUN = pend ? Recorder.restore(opts) : new Recorder(opts);
+  if (RUN.s.startedAt) RUN.start(); else RUN.warmup();
+  return RUN;
+}
+
+function screenRun(arg) {
+  const r = ensureRun(arg);
+  ui.runCtl = null;
+  setTimeout(updateRun, 0);
+  return `<div class="run">
+    <div class="row between"><a class="btn ghost sm" href="#avui">← Sortir</a><span class="pill" id="rGps">GPS…</span><button class="btn ghost sm" data-a="run-mute" id="rMute">Veu</button></div>
+    <div><span class="label">${r.sessionId ? 'Sessió guiada' : 'Cursa lliure'}</span><h1>${esc(r.title)}</h1></div>
+    <div class="card"><span class="label">Ara</span><h2 id="rSeg">–</h2>
+      <div class="row between"><span class="mono" id="rTarget"></span><span class="mono" id="rLeft"></span></div>
+      <div class="runbar"><i id="rBar"></i></div><p class="small muted" id="rNext"></p></div>
+    <div class="runbig"><span class="label">Ritme actual</span><b id="rPace" class="mono">–</b></div>
+    <div class="kv"><div><span class="label">Distància</span><b id="rDist">0,00</b></div><div><span class="label">Temps</span><b id="rTime">0:00</b></div><div><span class="label">Ritme mitjà</span><b id="rAvg">–</b></div></div>
+    <p class="note warn" id="rMsg" hidden></p>
+    <div class="stack" id="rCtl"></div>
+    <p class="small muted">Mantén la pantalla encesa i Pacely oberta mentre corres: si bloqueges el mòbil, el navegador pot deixar de rebre el GPS. Si portes el Polar, no cal gravar amb el mòbil: la cursa arribarà sola.</p></div>`;
+}
+
+function updateRun() {
+  const r = RUN;
+  if (!r || !document.getElementById('rSeg')) return;
+  const $ = id => document.getElementById(id);
+  const sg = r.segment;
+  const prog = r.segProgress();
+  const cur = r.currentPace();
+  const fresh = Date.now() - r.lastFix < 10000;
+  $('rGps').textContent = !fresh ? 'Sense GPS' : r.acc <= 10 ? 'GPS bo' : r.acc <= 30 ? `GPS ±${Math.round(r.acc)} m` : `GPS feble ±${Math.round(r.acc)} m`;
+  $('rGps').className = `pill ${fresh && r.acc <= 30 ? 'acc' : 'sun'}`;
+  $('rMute').textContent = r.s.muted ? 'Veu: no' : 'Veu: sí';
+  $('rSeg').textContent = r.s.paused && r.s.startedAt ? `En pausa · ${sg.label}` : sg.label;
+  $('rTarget').textContent = sg.pace ? `${fmtPace(sg.pace[0])}–${fmtPace(sg.pace[1])} /km` : sg.work ? 'Fort' : '';
+  $('rLeft').textContent = sg.kind === 'dist' ? `queden ${Math.max(0, Math.round(prog.left))} m` : sg.kind === 'time' ? `queden ${fmtTime(Math.max(0, prog.left))}` : '';
+  $('rBar').parentElement.hidden = sg.kind === 'open';
+  $('rBar').style.width = sg.kind === 'open' ? '0%' : `${Math.min(100, (prog.done / sg.target) * 100)}%`;
+  const nx = r.segments[r.s.seg + 1];
+  $('rNext').textContent = nx ? `Després: ${nx.label}` : '';
+  $('rPace').textContent = isFinite(cur) ? fmtPace(cur) : '–';
+  $('rPace').style.color = isFinite(cur) && sg.pace ? (cur < sg.pace[0] - 8 || cur > sg.pace[1] + 8 ? 'var(--warn)' : 'var(--ok)') : '';
+  $('rDist').textContent = (r.s.dist / 1000).toFixed(2).replace('.', ',') + ' km';
+  $('rTime').textContent = fmtTime(r.elapsed);
+  $('rAvg').textContent = isFinite(r.avgPace()) ? fmtPace(r.avgPace()) : '–';
+  $('rMsg').hidden = !ui.runMsg; $('rMsg').textContent = ui.runMsg || '';
+  const key = ui.runConfirm ? 'confirm' : !r.s.startedAt ? 'ready' : r.s.paused ? 'paused' : `run-${sg.kind === 'open'}`;
+  if (ui.runCtl === key) return;
+  ui.runCtl = key;
+  $('rCtl').innerHTML = key === 'confirm'
+    ? `<p><b>Vols acabar la cursa?</b></p><button class="btn block" data-a="run-save">Desar la cursa</button><div class="row"><button class="btn ghost grow" data-a="run-back">Continuar corrent</button><button class="btn line grow" data-a="run-discard">Descartar</button></div>`
+    : key === 'ready' ? `<button class="btn block" data-a="run-start" style="padding:18px;font-size:1.15rem">▶ Començar</button>`
+    : key === 'paused' ? `<button class="btn block" data-a="run-resume" style="padding:18px">Continuar</button><button class="btn ghost block" data-a="run-finish">Acabar</button>`
+    : `<div class="row"><button class="btn ghost grow" data-a="run-pause" style="padding:16px">Pausa</button>${key === 'run-false' ? '<button class="btn ghost grow" data-a="run-next" style="padding:16px">Tram següent ›</button>' : ''}</div><button class="btn line block" data-a="run-finish">Acabar</button>`;
+}
+
+async function saveRun() {
+  const a = RUN.finish();
+  RUN = null; ui.runConfirm = false; ui.runMsg = '';
+  if (a.km < 0.05) { toast('La cursa és massa curta i no s\'ha desat.'); location.hash = '#avui'; return; }
+  state.activities[a.key] = a;
+  const s = a.sessionId && findSession(a.sessionId);
+  if (s && !state.logs[s.id]) state.logs[s.id] = logFor(s, a);
+  save();
+  location.hash = s ? `#s/${s.id}` : '#historial';
+  await finishImport();
+  toast(`Cursa desada: ${kmTxt(a.km)} km en ${fmtTime(a.sec)}. Indica l'esforç a sota.`);
+}
+
 // ---------- Router ----------
-const ui = { draft: null, confirmReset: false, syncing: false };
+const ui = { draft: null, confirmReset: false, syncing: false, runMsg: '', runConfirm: false, runCtl: null };
 function applyTheme() {
   if (state.theme) document.documentElement.setAttribute('data-theme', state.theme);
   else document.documentElement.removeAttribute('data-theme');
@@ -526,7 +618,8 @@ function render() {
   const map = { avui: screenToday, pla: screenPlan, forca: screenStrength, historial: screenHistory, perfil: screenProfile, ritmes: screenZones };
   const tab = route === 's' ? 'pla' : route === 'ritmes' ? 'avui' : route;
   tabs(map[tab] ? tab : 'avui');
-  const html = route === 's' ? screenSession(arg) : (map[route] || screenToday)();
+  document.body.classList.toggle('running', route === 'run');
+  const html = route === 'run' ? screenRun(arg) : route === 's' ? screenSession(arg) : (map[route] || screenToday)();
   app.innerHTML = `<div class="screen stack" style="gap:18px">${html}</div>`;
   if (route === 'pla') document.querySelector('details.week[open]')?.scrollIntoView({ block: 'center' });
 }
@@ -587,6 +680,16 @@ document.addEventListener('click', e => {
       location.href = authUrl(state, v); break;
     }
     case 'sync': doSync(true); break;
+    case 'run-start': ui.runMsg = ''; RUN?.start(); updateRun(); break;
+    case 'run-pause': RUN?.pause(); break;
+    case 'run-resume': RUN?.resume(); break;
+    case 'run-next': RUN?.next(); break;
+    case 'run-mute': RUN?.toggleMute(); break;
+    case 'run-finish': ui.runConfirm = true; updateRun(); break;
+    case 'run-back': ui.runConfirm = false; updateRun(); break;
+    case 'run-save': saveRun(); break;
+    case 'run-discard': RUN?.finish(); Recorder.discard(); RUN = null; ui.runConfirm = false; ui.runMsg = ''; location.hash = '#avui'; toast('Cursa descartada'); break;
+    case 'gpx': { const a = state.activities[v]; if (a) download(`pacely-${a.date}.gpx`, 'application/gpx+xml', toGpx(a)); break; }
     case 'disconnect': delete state[v]; save(); render(); toast(`${SRC[v]} desconnectat`); break;
     case 'edit-plan': {
       const p = state.profile;

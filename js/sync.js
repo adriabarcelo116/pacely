@@ -213,6 +213,17 @@ export function parseActivityFile(text, fileName) {
 }
 
 // ---------- Casar activitats amb el pla ----------
+export function logFor(s, a) {
+  const isRace = s.type === 'race' && Math.abs(a.km * 1000 - s.distM) / s.distM < 0.04;
+  return {
+    id: s.id, date: s.date, type: s.type, title: s.title, status: 'done', km: a.km,
+    sec: s.type === 'test' ? null : isRace ? a.elapsed : a.sec, actSec: a.sec,
+    rpe: null, notes: '', distM: s.distM || null, targetKm: s.km, hr: a.hr,
+    source: a.source, actKey: a.key, actName: a.name, needsRpe: true, needsTime: s.type === 'test',
+    savedAt: new Date().toISOString(),
+  };
+}
+
 // Crea registres per a les sessions sense registre manual. Torna la llista de sessions casades.
 export function matchActivities(state, sessions) {
   const runs = sessions.filter(s => s.km);
@@ -223,21 +234,17 @@ export function matchActivities(state, sessions) {
   const actDates = new Set(acts.filter(x => !x.ignored).map(x => x.date));
   const matched = [];
   for (const a of acts) {
-    if (taken.has(a.key) || a.ignored) continue;
+    if (taken.has(a.key) || a.ignored || a.dupOf) continue;
+    // La mateixa cursa gravada amb el mòbil i amb el rellotge: ens quedem el registre i n'aprofitem les pulsacions
+    const twin = Object.values(state.logs).find(l => l.date === a.date && l.actKey && l.source !== a.source && l.km && Math.abs(l.km - a.km) / l.km < 0.15);
+    if (twin) { a.dupOf = twin.id; if (!twin.hr && a.hr) twin.hr = a.hr; continue; }
     const free = s => !state.logs[s.id];
     const sameDay = (byDate[a.date] || []).filter(free);
     const near = [-1, 1].flatMap(o => (byDate[iso(addDays(fromIso(a.date), o))] || [])
       .filter(s => free(s) && !actDates.has(s.date) && Math.abs(a.km - s.km) / s.km < 0.3));
     const s = sameDay.sort((x, y) => Math.abs(x.km - a.km) - Math.abs(y.km - a.km))[0] || near[0];
     if (!s) continue;
-    const isRace = s.type === 'race' && Math.abs(a.km * 1000 - s.distM) / s.distM < 0.04;
-    state.logs[s.id] = {
-      id: s.id, date: s.date, type: s.type, title: s.title, status: 'done', km: a.km,
-      sec: s.type === 'test' ? null : isRace ? a.elapsed : a.sec, actSec: a.sec,
-      rpe: null, notes: '', distM: s.distM || null, targetKm: s.km, hr: a.hr,
-      source: a.source, actKey: a.key, actName: a.name, needsRpe: true, needsTime: s.type === 'test',
-      savedAt: new Date().toISOString(),
-    };
+    state.logs[s.id] = logFor(s, a);
     taken.add(a.key);
     matched.push(s);
   }
