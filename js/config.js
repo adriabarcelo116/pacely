@@ -5,5 +5,5 @@
 export const CONFIG = {
   polarClientId: 'c385764e-628b-4c95-9332-4e086922a412',
   stravaClientId: '',
-  worker: '',
+  worker: 'https://pacely-connect.adriafeina06.workers.dev',
 };
