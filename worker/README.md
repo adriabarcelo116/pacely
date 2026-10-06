@@ -43,6 +43,4 @@ Et donarà una adreça com `https://pacely-connect.usuari.workers.dev`.
 
 Polar només comparteix les curses pujades després de connectar (dels últims 30 dies).
 
-## Strava (opcional)
-
-Des de juny de 2026 Strava demana subscripció per crear una app. Si en tens, afegeix també `STRAVA_CLIENT_ID` i `STRAVA_CLIENT_SECRET` al Worker i el Client ID de Strava a la configuració.
+Per comprovar el Worker, obre `https://<el-teu-worker>/health` al navegador: diu si les dues claus hi són, sense mostrar-les.

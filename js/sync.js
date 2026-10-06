@@ -1,4 +1,4 @@
-// Importació d'activitats: Polar Flow (AccessLink), Strava i fitxers GPX/TCX, sempre via el Worker.
+// Importació d'activitats: Polar Flow (AccessLink, via el Worker) i fitxers GPX/TCX.
 // Cada activitat de córrer es casa amb la sessió del pla del mateix dia (o del dia abans/després si estava pendent).
 
 import { CONFIG } from './config.js';
@@ -8,21 +8,15 @@ export function connCfg(state) {
   const s = state.settings || {};
   return {
     polarId: (s.polarClientId || CONFIG.polarClientId || '').trim(),
-    stravaId: (s.stravaClientId || CONFIG.stravaClientId || '').trim(),
-    worker: (s.worker || s.stravaWorker || CONFIG.worker || '').trim().replace(/\/$/, ''),
+    worker: (s.worker || CONFIG.worker || '').trim().replace(/\/$/, ''),
   };
 }
 
 const redirectUri = () => location.origin + location.pathname;
 
-export function authUrl(state, provider) {
-  const c = connCfg(state);
-  if (provider === 'polar') {
-    const p = new URLSearchParams({ response_type: 'code', client_id: c.polarId, redirect_uri: redirectUri(), scope: 'accesslink.read_all', state: 'pacely-polar' });
-    return `https://flow.polar.com/oauth2/authorization?${p}`;
-  }
-  const p = new URLSearchParams({ client_id: c.stravaId, response_type: 'code', redirect_uri: redirectUri(), approval_prompt: 'auto', scope: 'read,activity:read_all', state: 'pacely-strava' });
-  return `https://www.strava.com/oauth/authorize?${p}`;
+export function authUrl(state) {
+  const p = new URLSearchParams({ response_type: 'code', client_id: connCfg(state).polarId, redirect_uri: redirectUri(), scope: 'accesslink.read_all', state: 'pacely-polar' });
+  return `https://flow.polar.com/oauth2/authorization?${p}`;
 }
 
 async function post(url, body) {
@@ -32,85 +26,51 @@ async function post(url, body) {
   return d;
 }
 
-// Torna { provider, result } o null si la pàgina no ve d'una autorització
+// Torna 'connected', 'denied' o null si la pàgina no ve de l'autorització de Polar
 export async function handleRedirect(state) {
   const p = new URLSearchParams(location.search);
-  const st = p.get('state');
-  if (st !== 'pacely-polar' && st !== 'pacely-strava') return null;
-  const provider = st.split('-')[1];
+  if (p.get('state') !== 'pacely-polar') return null;
   const keep = new URLSearchParams(location.search);
   ['state', 'code', 'scope', 'error'].forEach(k => keep.delete(k));
   history.replaceState(null, '', location.pathname + (keep.toString() ? `?${keep}` : '') + '#perfil');
-  if (p.get('error') || !p.get('code')) return { provider, result: 'denied' };
-  const { worker } = connCfg(state);
-  if (provider === 'polar') {
-    const d = await post(`${worker}/polar/token`, { code: p.get('code'), redirect_uri: redirectUri() });
-    state.polar = { access: d.access_token, userId: d.user_id, lastSync: 0, connectedAt: Date.now() };
-  } else {
-    if (!(p.get('scope') || '').includes('activity:read')) return { provider, result: 'noscope' };
-    const d = await post(`${worker}/token`, { code: p.get('code') });
-    state.strava = { access: d.access_token, refresh: d.refresh_token, expires: d.expires_at, athlete: d.athlete?.firstname || '', lastSync: 0 };
-  }
-  return { provider, result: 'connected' };
+  if (p.get('error') || !p.get('code')) return 'denied';
+  const d = await post(`${connCfg(state).worker}/polar/token`, { code: p.get('code'), redirect_uri: redirectUri() });
+  state.polar = { access: d.access_token, userId: d.user_id, lastSync: 0, connectedAt: Date.now() };
+  return 'connected';
 }
 
-async function get(state, provider, path, asText) {
-  const { worker } = connCfg(state);
-  let tok, url;
-  if (provider === 'polar') { tok = state.polar.access; url = `${worker}/polar/api/${path}`; }
-  else { tok = await stravaToken(state); url = `${worker}/api/${path}`; }
-  const r = await fetch(url, { headers: { Authorization: `Bearer ${tok}` } });
-  const name = provider === 'polar' ? 'Polar' : 'Strava';
-  if (r.status === 401 || r.status === 403) throw new Error(`${name} ha retirat el permís. Torna a connectar.`);
-  if (r.status === 429) throw new Error(`${name} limita les peticions. Prova-ho d'aquí a 15 minuts.`);
+async function get(state, path, asText) {
+  const r = await fetch(`${connCfg(state).worker}/polar/api/${path}`, { headers: { Authorization: `Bearer ${state.polar.access}` } });
+  if (r.status === 401 || r.status === 403) throw new Error('Polar ha retirat el permís. Torna a connectar.');
+  if (r.status === 429) throw new Error('Polar limita les peticions. Prova-ho d\'aquí a 15 minuts.');
   if (r.status === 204 || r.status === 404) return asText ? '' : [];
-  if (!r.ok) throw new Error(`${name} ha respost amb error ${r.status}`);
+  if (!r.ok) throw new Error(`Polar ha respost amb error ${r.status}`);
   return asText ? r.text() : r.json();
-}
-
-async function stravaToken(state) {
-  const s = state.strava;
-  if (s.expires - 120 > Date.now() / 1000) return s.access;
-  const d = await post(`${connCfg(state).worker}/token`, { refresh_token: s.refresh });
-  Object.assign(s, { access: d.access_token, refresh: d.refresh_token, expires: d.expires_at });
-  return s.access;
 }
 
 // "PT1H2M3.5S" → segons
 const isoDur = s => { const m = /PT(?:(\d+)H)?(?:(\d+)M)?(?:([\d.]+)S)?/.exec(s || ''); return m ? (+m[1] || 0) * 3600 + (+m[2] || 0) * 60 + (+m[3] || 0) : 0; };
 
-// Descarrega curses noves. Torna el nombre d'activitats noves.
-export async function syncProvider(state, provider, sinceIso) {
+// Descarrega les curses noves de Polar Flow. Torna el nombre d'activitats noves.
+// AccessLink dona les sessions dels últims 30 dies pujades després de connectar.
+export async function syncPolar(state, sinceIso) {
   state.activities ||= {};
   let added = 0;
-  const put = a => { if (!state.activities[a.key]) added++; state.activities[a.key] = { ...state.activities[a.key], ...a }; };
-  if (provider === 'polar') {
-    // AccessLink dona les sessions dels últims 30 dies pujades després de connectar
-    const list = await get(state, 'polar', 'exercises');
-    for (const e of Array.isArray(list) ? list : []) {
-      const sport = `${e.sport || ''} ${e.detailed_sport_info || ''}`.toUpperCase();
-      if (!sport.includes('RUN')) continue;
-      const date = (e.start_time || '').slice(0, 10);
-      if (!date || date < sinceIso) continue;
-      put({ key: `polar:${e.id}`, source: 'polar', extId: e.id, name: (e.detailed_sport_info || 'Running').replace(/_/g, ' ').toLowerCase(),
-        date, km: Math.round((e.distance || 0) / 10) / 100, sec: Math.round(isoDur(e.duration)), elapsed: Math.round(isoDur(e.duration)),
-        hr: e.heart_rate?.average || null });
-    }
-    state.polar.lastSync = Date.now();
-  } else {
-    const after = Math.floor(fromIso(sinceIso).getTime() / 1000) - 86400;
-    for (let page = 1; page <= 10; page++) {
-      const list = await get(state, 'strava', `athlete/activities?after=${after}&per_page=100&page=${page}`);
-      for (const a of list) {
-        if (!['Run', 'TrailRun', 'VirtualRun'].includes(a.sport_type || a.type)) continue;
-        put({ key: `strava:${a.id}`, source: 'strava', extId: a.id, name: a.name, date: a.start_date_local.slice(0, 10),
-          km: Math.round(a.distance / 10) / 100, sec: a.moving_time, elapsed: a.elapsed_time,
-          hr: a.average_heartrate ? Math.round(a.average_heartrate) : null });
-      }
-      if (list.length < 100) break;
-    }
-    state.strava.lastSync = Date.now();
+  const list = await get(state, 'exercises');
+  for (const e of Array.isArray(list) ? list : []) {
+    const sport = `${e.sport || ''} ${e.detailed_sport_info || ''}`.toUpperCase();
+    if (!sport.includes('RUN')) continue;
+    const date = (e.start_time || '').slice(0, 10);
+    if (!date || date < sinceIso) continue;
+    const key = `polar:${e.id}`;
+    if (!state.activities[key]) added++;
+    state.activities[key] = {
+      ...state.activities[key], key, source: 'polar', extId: e.id, name: (e.detailed_sport_info || 'Running').replace(/_/g, ' ').toLowerCase(),
+      date, km: Math.round((e.distance || 0) / 10) / 100, sec: Math.round(isoDur(e.duration)), elapsed: Math.round(isoDur(e.duration)),
+      hr: e.heart_rate?.average || null, hrMax: e.heart_rate?.maximum || null,
+    };
   }
+  state.polar.lastSync = Date.now();
   return added;
 }
 
@@ -119,12 +79,8 @@ export async function fetchBestEffort(state, act, distM) {
   act.best ||= {};
   if (act.best[distM] !== undefined) return act.best[distM];
   let best = null;
-  if (act.source === 'strava' && state.strava) {
-    const d = await get(state, 'strava', `activities/${act.extId}`);
-    const name = distM === 5000 ? '5K' : distM === 10000 ? '10K' : null;
-    best = (d.best_efforts || []).find(b => b.name === name)?.elapsed_time || null;
-  } else if (act.source === 'polar' && state.polar) {
-    const tcx = await get(state, 'polar', `exercises/${act.extId}/tcx`, true);
+  if (act.source === 'polar' && state.polar) {
+    const tcx = await get(state, `exercises/${act.extId}/tcx`, true);
     if (tcx) best = bestFromPoints(trackPoints(tcx), distM);
   } else if (act.points) best = bestFromPoints(act.points, distM);
   act.best[distM] = best ? Math.round(best) : null;

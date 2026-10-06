@@ -1,10 +1,7 @@
-// Pacely · intermediari per a Polar AccessLink i Strava (Cloudflare Worker, pla gratuït).
-// Guarda les claus secretes fora de l'app i reenvia només les crides que Pacely necessita.
+// Pacely · intermediari per a Polar AccessLink (Cloudflare Worker, pla gratuït).
+// Guarda la clau secreta fora de l'app i reenvia només les crides que Pacely necessita.
 // Secrets (wrangler secret put ...): POLAR_CLIENT_ID, POLAR_CLIENT_SECRET
-//   i, opcionalment, STRAVA_CLIENT_ID, STRAVA_CLIENT_SECRET
 // Variable normal (wrangler.toml): ALLOWED_ORIGINS = "https://usuari.github.io,http://localhost:5180"
-
-const ALLOWED_API = [/^athlete\/activities$/, /^activities\/\d+$/];
 
 export default {
   async fetch(req, env) {
@@ -20,17 +17,17 @@ export default {
     };
     const json = (data, status = 200) => new Response(JSON.stringify(data), { status, headers: { ...cors, 'Content-Type': 'application/json' } });
 
-    if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: cors });
-    if (!ok) return json({ error: 'Origen no permès' }, 403);
-
     const url = new URL(req.url);
 
-    // Diagnòstic: diu si les claus hi són i tenen format d'UUID, sense revelar-les
+    // Diagnòstic obert: diu si les claus hi són i tenen format d'UUID, sense revelar-les
     if (url.pathname === '/health') {
       const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
       const info = v => ({ set: !!(v || '').trim(), uuid: uuid.test((v || '').trim()) });
-      return json({ polarId: info(env.POLAR_CLIENT_ID), polarSecret: info(env.POLAR_CLIENT_SECRET), same: !!env.POLAR_CLIENT_ID && env.POLAR_CLIENT_ID === env.POLAR_CLIENT_SECRET });
+      return json({ polarId: info(env.POLAR_CLIENT_ID), polarSecret: info(env.POLAR_CLIENT_SECRET) });
     }
+
+    if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: cors });
+    if (!ok) return json({ error: 'Origen no permès' }, 403);
 
     // ---------- Polar AccessLink (gratuït) ----------
     if (url.pathname === '/polar/token' && req.method === 'POST') {
@@ -64,34 +61,6 @@ export default {
       const accept = path.endsWith('/tcx') ? 'application/vnd.garmin.tcx+xml' : path.endsWith('/gpx') ? 'application/gpx+xml' : 'application/json';
       const r = await fetch(`https://www.polaraccesslink.com/v3/${path}${url.search}`, { headers: { Authorization: auth, Accept: accept } });
       return new Response(r.body, { status: r.status, headers: { ...cors, 'Content-Type': r.headers.get('Content-Type') || accept } });
-    }
-
-    // ---------- Strava (requereix subscripció de Strava per crear l'app) ----------
-    // Intercanvi de codi o renovació del token
-    if (url.pathname === '/token' && req.method === 'POST') {
-      let body;
-      try { body = await req.json(); } catch { return json({ error: 'JSON invàlid' }, 400); }
-      const params = new URLSearchParams({ client_id: (env.STRAVA_CLIENT_ID || '').trim(), client_secret: (env.STRAVA_CLIENT_SECRET || '').trim() });
-      if (body.code) { params.set('grant_type', 'authorization_code'); params.set('code', body.code); }
-      else if (body.refresh_token) { params.set('grant_type', 'refresh_token'); params.set('refresh_token', body.refresh_token); }
-      else return json({ error: 'Falta code o refresh_token' }, 400);
-      const r = await fetch('https://www.strava.com/oauth/token', { method: 'POST', body: params });
-      const d = await r.json();
-      if (!r.ok) return json({ error: d.message || 'Strava ha rebutjat la petició' }, r.status);
-      return json({
-        access_token: d.access_token, refresh_token: d.refresh_token, expires_at: d.expires_at,
-        athlete: d.athlete ? { id: d.athlete.id, firstname: d.athlete.firstname } : undefined,
-      });
-    }
-
-    // Lectura d'activitats (només les rutes de la llista)
-    if (url.pathname.startsWith('/api/') && req.method === 'GET') {
-      const path = url.pathname.slice(5);
-      if (!ALLOWED_API.some(re => re.test(path))) return json({ error: 'Ruta no permesa' }, 404);
-      const auth = req.headers.get('Authorization');
-      if (!auth) return json({ error: 'Falta el token' }, 401);
-      const r = await fetch(`https://www.strava.com/api/v3/${path}${url.search}`, { headers: { Authorization: auth } });
-      return new Response(r.body, { status: r.status, headers: { ...cors, 'Content-Type': 'application/json' } });
     }
 
     return json({ error: 'No trobat' }, 404);

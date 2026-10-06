@@ -1,7 +1,7 @@
 import { vdotFrom, predict, zones, DIST, LEVEL_5K, fmtPace, fmtTime, parseTime } from './vdot.js';
 import { buildPlan, planFrame, PHASES, iso, fromIso, addDays, dow, monday, estSeconds } from './plan.js';
 import { ROUTINES, ZONE_INFO, TYPE_INFO } from './library.js';
-import { connCfg, authUrl, handleRedirect, syncProvider, fetchBestEffort, parseActivityFile, matchActivities, logFor } from './sync.js';
+import { connCfg, authUrl, handleRedirect, syncPolar, fetchBestEffort, parseActivityFile, matchActivities, logFor } from './sync.js';
 import { Recorder, buildSegments, toGpx } from './gps.js';
 import { HeartRate, hrSupported } from './hr.js';
 
@@ -43,10 +43,8 @@ function toast(msg) {
 }
 
 // ---------- Sincronització ----------
-const SRC = { polar: 'Polar Flow', strava: 'Strava', file: 'fitxer', gps: 'GPS del mòbil' };
+const SRC = { polar: 'Polar Flow', file: 'fitxer', gps: 'GPS del mòbil' };
 const srcLabel = src => (src === 'gps' ? 'Gravada amb el GPS del mòbil' : `Importada de ${SRC[src] || 'fora'}`);
-const PROVIDERS = ['polar', 'strava'];
-const connected = () => PROVIDERS.filter(p => state[p]);
 
 async function finishImport() {
   computePlan();
@@ -64,12 +62,10 @@ async function finishImport() {
 }
 
 async function doSync(manual) {
-  const provs = connected();
-  if (!provs.length || ui.syncing) return;
+  if (!state.polar || ui.syncing) return;
   ui.syncing = true; if (manual) render();
   try {
-    let n = 0;
-    for (const p of provs) n += await syncProvider(state, p, state.profile.startDate);
+    const n = await syncPolar(state, state.profile.startDate);
     const m = await finishImport();
     if (manual || m.length) toast(m.length ? `${m.length} ${m.length === 1 ? 'sessió registrada' : 'sessions registrades'} des del rellotge` : n ? `${n} curses noves, cap coincideix amb el pla` : 'Tot al dia');
   } catch (e) { if (manual) toast(e.message || 'No s\'ha pogut connectar'); }
@@ -452,27 +448,21 @@ function screenProfile() {
 function watchCard() {
   const c = connCfg(state);
   const nActs = Object.keys(state.activities || {}).length;
-  const status = p => {
-    const s = state[p];
-    const ago = s?.lastSync ? Math.round((Date.now() - s.lastSync) / 60000) : null;
-    return `<div class="row between"><span>Connectat a <b>${SRC[p]}</b>${s.athlete ? ` com a ${esc(s.athlete)}` : ''}</span><button class="btn ghost sm" data-a="disconnect" data-v="${p}">Desconnectar</button></div>
-      <p class="small muted">${ago === null ? 'Encara no s\'ha sincronitzat.' : ago < 1 ? 'Sincronitzat fa un moment.' : `Última sincronització fa ${ago < 60 ? ago + ' min' : Math.round(ago / 60) + ' h'}.`}</p>`;
-  };
-  const any = connected().length;
+  const p = state.polar;
+  const ago = p?.lastSync ? Math.round((Date.now() - p.lastSync) / 60000) : null;
   return `<div class="card"><span class="label">Rellotge</span>
-    ${state.polar ? status('polar') : `<p class="small muted">Connecta Polar Flow i Pacely registrarà soles les teves curses a la sessió del dia, amb km, temps i pulsacions. És gratuït.</p>
-      <button class="btn" data-a="connect" data-v="polar">Connectar amb Polar Flow</button>
+    ${p ? `<div class="row between"><span>Connectat a <b>Polar Flow</b></span><button class="btn ghost sm" data-a="disconnect">Desconnectar</button></div>
+      <p class="small muted">${ago === null ? 'Encara no s\'ha sincronitzat.' : ago < 1 ? 'Sincronitzat fa un moment.' : `Última sincronització fa ${ago < 60 ? ago + ' min' : Math.round(ago / 60) + ' h'}.`} ${nActs} curses importades.</p>
+      <button class="btn" data-a="sync" ${ui.syncing ? 'disabled' : ''}>${ui.syncing ? 'Sincronitzant…' : 'Sincronitzar ara'}</button>`
+    : `<p class="small muted">Connecta Polar Flow i Pacely registrarà soles les teves curses a la sessió del dia, amb km, temps i pulsacions. És gratuït.</p>
+      <button class="btn" data-a="connect">Connectar amb Polar Flow</button>
       <p class="small muted">Polar només comparteix les curses que pugis <b>després</b> de connectar (fins a 30 dies enrere).</p>`}
-    ${state.strava ? status('strava') : ''}
-    ${any ? `<button class="btn" data-a="sync" ${ui.syncing ? 'disabled' : ''}>${ui.syncing ? 'Sincronitzant…' : 'Sincronitzar ara'}</button><p class="small muted">${nActs} curses importades.</p>` : ''}
     <details><summary class="small" style="cursor:pointer">Configuració de la connexió</summary>
       <form id="connCfg" class="stack" style="margin-top:10px">
         <label class="field"><span>Client ID de Polar AccessLink</span><input type="text" id="cfgPolar" value="${esc(c.polarId)}" placeholder="de admin.polaraccesslink.com"></label>
         <label class="field"><span>Adreça del Worker</span><input type="text" id="cfgWorker" value="${esc(c.worker)}" placeholder="https://pacely-connect.….workers.dev"></label>
-        <label class="field"><span>Client ID de Strava (opcional, cal subscripció de Strava)</span><input type="text" id="cfgStrava" inputmode="numeric" value="${esc(c.stravaId)}"></label>
         <button class="btn ghost" type="submit">Desa la configuració</button>
         <p class="small muted">A Polar AccessLink, posa com a adreça de retorn (redirect URL): <b class="mono" style="word-break:break-all">${esc(location.origin + location.pathname)}</b></p>
-        ${c.stravaId && !state.strava ? '<button type="button" class="btn line" data-a="connect" data-v="strava">Connectar també Strava</button>' : ''}
       </form></details>
     <hr style="border:none;border-top:1px solid var(--line);margin:4px 0">
     <span class="small">Sense connexió: exporta la cursa de Polar Flow en GPX o TCX i importa-la aquí.</span>
@@ -699,12 +689,12 @@ document.addEventListener('click', e => {
     }
     case 'connect': {
       const c = connCfg(state);
-      if (!(v === 'polar' ? c.polarId : c.stravaId) || !c.worker) {
+      if (!c.polarId || !c.worker) {
         const d = document.querySelector('#connCfg')?.closest('details');
         if (d) d.open = true;
         toast('Primer omple el Client ID i l\'adreça del Worker a "Configuració de la connexió".'); break;
       }
-      location.href = authUrl(state, v); break;
+      location.href = authUrl(state); break;
     }
     case 'sync': doSync(true); break;
     case 'run-start': ui.runMsg = ''; RUN?.start(); updateRun(); break;
@@ -722,7 +712,7 @@ document.addEventListener('click', e => {
     case 'hr-off': HR.disconnect(); break;
     case 'run-discard': RUN?.finish(); Recorder.discard(); RUN = null; ui.runConfirm = false; ui.runMsg = ''; location.hash = '#avui'; toast('Cursa descartada'); break;
     case 'gpx': { const a = state.activities[v]; if (a) download(`pacely-${a.date}.gpx`, 'application/gpx+xml', toGpx(a)); break; }
-    case 'disconnect': delete state[v]; save(); render(); toast(`${SRC[v]} desconnectat`); break;
+    case 'disconnect': delete state.polar; save(); render(); toast('Polar Flow desconnectat'); break;
     case 'edit-plan': {
       const p = state.profile;
       const r = p.base;
@@ -807,7 +797,7 @@ document.addEventListener('submit', e => {
   }
   if (e.target.id === 'connCfg') {
     const g = id => document.getElementById(id).value.trim();
-    state.settings = { ...(state.settings || {}), polarClientId: g('cfgPolar'), stravaClientId: g('cfgStrava'), worker: g('cfgWorker') };
+    state.settings = { ...(state.settings || {}), polarClientId: g('cfgPolar'), worker: g('cfgWorker') };
     save(); render(); toast('Configuració desada');
   }
   if (e.target.id === 'resultForm') {
@@ -824,15 +814,12 @@ render();
 
 handleRedirect(state).then(r => {
   if (!r) {
-    const stale = connected().some(p => Date.now() - (state[p].lastSync || 0) > 15 * 60000);
-    if (state.profile && stale) doSync(false);
+    if (state.profile && state.polar && Date.now() - (state.polar.lastSync || 0) > 15 * 60000) doSync(false);
     return;
   }
   save(); render();
-  const name = SRC[r.provider];
-  if (r.result === 'connected') { toast(`${name} connectat. Buscant curses…`); doSync(true); }
-  else if (r.result === 'noscope') toast('Cal marcar el permís per llegir les activitats. Torna-ho a provar.');
-  else toast(`Has cancel·lat la connexió amb ${name}.`);
+  if (r === 'connected') { toast('Polar Flow connectat. Buscant curses…'); doSync(true); }
+  else toast('Has cancel·lat la connexió amb Polar Flow.');
 }).catch(e => { save(); render(); toast(e.message || 'No s\'ha pogut connectar'); });
 
 if ('serviceWorker' in navigator && location.hostname === 'localhost') {
