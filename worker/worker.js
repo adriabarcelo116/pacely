@@ -25,12 +25,19 @@ export default {
 
     const url = new URL(req.url);
 
+    // Diagnòstic: diu si les claus hi són i tenen format d'UUID, sense revelar-les
+    if (url.pathname === '/health') {
+      const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      const info = v => ({ set: !!(v || '').trim(), uuid: uuid.test((v || '').trim()) });
+      return json({ polarId: info(env.POLAR_CLIENT_ID), polarSecret: info(env.POLAR_CLIENT_SECRET), same: !!env.POLAR_CLIENT_ID && env.POLAR_CLIENT_ID === env.POLAR_CLIENT_SECRET });
+    }
+
     // ---------- Polar AccessLink (gratuït) ----------
     if (url.pathname === '/polar/token' && req.method === 'POST') {
       let body;
       try { body = await req.json(); } catch { return json({ error: 'JSON invàlid' }, 400); }
       if (!body.code) return json({ error: 'Falta code' }, 400);
-      const basic = btoa(`${env.POLAR_CLIENT_ID}:${env.POLAR_CLIENT_SECRET}`);
+      const basic = btoa(`${(env.POLAR_CLIENT_ID || '').trim()}:${(env.POLAR_CLIENT_SECRET || '').trim()}`);
       const params = new URLSearchParams({ grant_type: 'authorization_code', code: body.code });
       if (body.redirect_uri) params.set('redirect_uri', body.redirect_uri);
       const r = await fetch('https://polarremote.com/v2/oauth2/token', {
@@ -64,7 +71,7 @@ export default {
     if (url.pathname === '/token' && req.method === 'POST') {
       let body;
       try { body = await req.json(); } catch { return json({ error: 'JSON invàlid' }, 400); }
-      const params = new URLSearchParams({ client_id: env.STRAVA_CLIENT_ID, client_secret: env.STRAVA_CLIENT_SECRET });
+      const params = new URLSearchParams({ client_id: (env.STRAVA_CLIENT_ID || '').trim(), client_secret: (env.STRAVA_CLIENT_SECRET || '').trim() });
       if (body.code) { params.set('grant_type', 'authorization_code'); params.set('code', body.code); }
       else if (body.refresh_token) { params.set('grant_type', 'refresh_token'); params.set('refresh_token', body.refresh_token); }
       else return json({ error: 'Falta code o refresh_token' }, 400);
