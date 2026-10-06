@@ -1,5 +1,5 @@
-// Gambada · intermediari per a Polar AccessLink i Strava (Cloudflare Worker, pla gratuït).
-// Guarda les claus secretes fora de l'app i reenvia només les crides que Gambada necessita.
+// Pacely · intermediari per a Polar AccessLink i Strava (Cloudflare Worker, pla gratuït).
+// Guarda les claus secretes fora de l'app i reenvia només les crides que Pacely necessita.
 // Secrets (wrangler secret put ...): POLAR_CLIENT_ID, POLAR_CLIENT_SECRET
 //   i, opcionalment, STRAVA_CLIENT_ID, STRAVA_CLIENT_SECRET
 // Variable normal (wrangler.toml): ALLOWED_ORIGINS = "https://usuari.github.io,http://localhost:5180"
@@ -43,7 +43,7 @@ export default {
       const reg = await fetch('https://www.polaraccesslink.com/v3/users', {
         method: 'POST',
         headers: { Authorization: `Bearer ${d.access_token}`, 'Content-Type': 'application/json', Accept: 'application/json' },
-        body: JSON.stringify({ 'member-id': `gambada-${d.x_user_id}` }),
+        body: JSON.stringify({ 'member-id': `pacely-${d.x_user_id}` }),
       });
       if (!reg.ok && reg.status !== 409) return json({ error: `No s'ha pogut registrar l'usuari a Polar (${reg.status})` }, 502);
       return json({ access_token: d.access_token, user_id: d.x_user_id, expires_in: d.expires_in });

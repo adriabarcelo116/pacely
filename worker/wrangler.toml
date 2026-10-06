@@ -1,7 +1,7 @@
-name = "gambada-connect"
+name = "pacely-connect"
 main = "worker.js"
 compatibility_date = "2026-10-01"
 
 [vars]
-# Afegeix aquí l'adreça on publiquis Gambada (sense barra final), separada per comes.
+# Afegeix aquí l'adreça on publiquis Pacely (sense barra final), separada per comes.
 ALLOWED_ORIGINS = "https://adriabarcelo116.github.io,http://localhost:5180"

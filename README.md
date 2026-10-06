@@ -1,8 +1,8 @@
-# Gambada
+# Pacely
 
 Plans d'entrenament de córrer personalitzats i gratuïts, de 5K a ultra. App web instal·lable (PWA), en català.
 
-**Obre-la:** <https://adriabarcelo116.github.io/gambada/>. Al mòbil, "Afegeix a la pantalla d'inici".
+**Obre-la:** <https://adriabarcelo116.github.io/pacely/>. Al mòbil, "Afegeix a la pantalla d'inici".
 
 ## Què fa
 

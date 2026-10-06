@@ -4,7 +4,7 @@ import { ROUTINES, ZONE_INFO, TYPE_INFO } from './library.js';
 import { connCfg, authUrl, handleRedirect, syncProvider, fetchBestEffort, parseActivityFile, matchActivities } from './sync.js';
 
 // ---------- Estat ----------
-const KEY = 'gambada:v1';
+const KEY = 'pacely:v1';
 const DAYS = ['Dl', 'Dt', 'Dc', 'Dj', 'Dv', 'Ds', 'Dg'];
 const DAYS_LONG = ['dilluns', 'dimarts', 'dimecres', 'dijous', 'divendres', 'dissabte', 'diumenge'];
 const MONTHS = ['gen', 'feb', 'març', 'abr', 'maig', 'juny', 'jul', 'ag', 'set', 'oct', 'nov', 'des'];
@@ -115,9 +115,9 @@ function renderOnboarding() {
     <button class="btn" data-a="ob-next" ${disabled ? 'disabled' : ''}>${next}</button></div>`;
   let body = '';
   if (ob.step === 0) {
-    body = `<div class="brand">${ICON.logo} Gambada</div>
+    body = `<div class="brand">${ICON.logo} Pacely</div>
       <h1>Plans d'entrenament personalitzats, sense pagar res.</h1>
-      <p class="muted">Respon cinc preguntes i Gambada et crea un pla de 5K a ultra, amb ritmes calculats per a tu, força i mobilitat. El pla s'adapta als tests i a les sessions que fas o et saltes.</p>
+      <p class="muted">Respon cinc preguntes i Pacely et crea un pla de 5K a ultra, amb ritmes calculats per a tu, força i mobilitat. El pla s'adapta als tests i a les sessions que fas o et saltes.</p>
       <div class="stack"><button class="btn block" data-a="ob-next">Crear el meu pla</button>
       <label class="btn line block" for="importFile">Tinc una còpia de seguretat</label>
       <input type="file" id="importFile" accept="application/json" hidden></div>
@@ -249,7 +249,7 @@ function sessRow(s, opts = {}) {
 function header(title, sub) {
   const raceIso = iso(PLAN.frame.race);
   const days = Math.round((fromIso(raceIso) - fromIso(TODAY)) / 864e5);
-  return `<div class="top"><div><div class="brand">${ICON.logo} Gambada</div><h1>${title}</h1>${sub ? `<p class="muted">${sub}</p>` : ''}</div>
+  return `<div class="top"><div><div class="brand">${ICON.logo} Pacely</div><h1>${title}</h1>${sub ? `<p class="muted">${sub}</p>` : ''}</div>
     ${days >= 0 ? `<div class="count"><span class="label">Falten</span><b>${days}</b><span class="small muted">dies</span></div>` : ''}</div>`;
 }
 
@@ -437,7 +437,7 @@ function screenProfile() {
       <label class="btn line" for="importFile">Restaurar una còpia</label><input type="file" id="importFile" accept="application/json" hidden></div>
     <div class="card"><span class="label">Aparença</span><div class="chips">${[['', 'Sistema'], ['light', 'Clar'], ['dark', 'Fosc']].map(([k, n]) => `<button class="chip" data-a="theme" data-v="${k}" aria-pressed="${(state.theme || '') === k}">${n}</button>`).join('')}</div></div>
     <div class="card">${ui.confirmReset ? `<p><b>Segur?</b> S'esborraran el pla i tots els registres d'aquest dispositiu.</p><div class="row"><button class="btn danger" data-a="reset-yes">Sí, esborra-ho tot</button><button class="btn ghost" data-a="reset-no">Cancel·la</button></div>` : '<button class="btn line" data-a="reset">Esborrar totes les dades</button>'}</div>
-    <p class="small muted">Gambada és gratuïta i de codi obert. Els ritmes es calculen amb el model VDOT de Jack Daniels. No està afiliada a Runna ni a cap altra app. Si tens dolor que no desapareix en 48 h, para i consulta un professional.</p>`;
+    <p class="small muted">Pacely és gratuïta i de codi obert. Els ritmes es calculen amb el model VDOT de Jack Daniels. No està afiliada a Runna ni a cap altra app. Si tens dolor que no desapareix en 48 h, para i consulta un professional.</p>`;
 }
 
 function watchCard() {
@@ -451,7 +451,7 @@ function watchCard() {
   };
   const any = connected().length;
   return `<div class="card"><span class="label">Rellotge</span>
-    ${state.polar ? status('polar') : `<p class="small muted">Connecta Polar Flow i Gambada registrarà soles les teves curses a la sessió del dia, amb km, temps i pulsacions. És gratuït.</p>
+    ${state.polar ? status('polar') : `<p class="small muted">Connecta Polar Flow i Pacely registrarà soles les teves curses a la sessió del dia, amb km, temps i pulsacions. És gratuït.</p>
       <button class="btn" data-a="connect" data-v="polar">Connectar amb Polar Flow</button>
       <p class="small muted">Polar només comparteix les curses que pugis <b>després</b> de connectar (fins a 30 dies enrere).</p>`}
     ${state.strava ? status('strava') : ''}
@@ -459,7 +459,7 @@ function watchCard() {
     <details><summary class="small" style="cursor:pointer">Configuració de la connexió</summary>
       <form id="connCfg" class="stack" style="margin-top:10px">
         <label class="field"><span>Client ID de Polar AccessLink</span><input type="text" id="cfgPolar" value="${esc(c.polarId)}" placeholder="de admin.polaraccesslink.com"></label>
-        <label class="field"><span>Adreça del Worker</span><input type="text" id="cfgWorker" value="${esc(c.worker)}" placeholder="https://gambada-connect.….workers.dev"></label>
+        <label class="field"><span>Adreça del Worker</span><input type="text" id="cfgWorker" value="${esc(c.worker)}" placeholder="https://pacely-connect.….workers.dev"></label>
         <label class="field"><span>Client ID de Strava (opcional, cal subscripció de Strava)</span><input type="text" id="cfgStrava" inputmode="numeric" value="${esc(c.stravaId)}"></label>
         <button class="btn ghost" type="submit">Desa la configuració</button>
         <p class="small muted">A Polar AccessLink, posa com a adreça de retorn (redirect URL): <b class="mono" style="word-break:break-all">${esc(location.origin + location.pathname)}</b></p>
@@ -494,10 +494,10 @@ function exportIcs() {
     const e = iso(addDays(fromIso(s.date), 1)).replace(/-/g, '');
     const desc = s.km ? stepRows(s, s.week.zones).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').replace(/ (?=Escalfament|Tornada|\d+ ×|\d+,?\d* km)/g, '\n').trim()
       : ROUTINES[s.routine].ex.map(x => `${x.n}: ${x.d}`).join('\n');
-    return ['BEGIN:VEVENT', `UID:${s.id}@gambada`, `DTSTAMP:${stamp}`, `DTSTART;VALUE=DATE:${d}`, `DTEND;VALUE=DATE:${e}`,
+    return ['BEGIN:VEVENT', `UID:${s.id}@pacely`, `DTSTAMP:${stamp}`, `DTSTART;VALUE=DATE:${d}`, `DTEND;VALUE=DATE:${e}`,
       `SUMMARY:${icsEsc(`S${s.week.idx + 1} · ${s.title}`)}`, `DESCRIPTION:${icsEsc(desc + (s.note ? '\n' + s.note : ''))}`, 'TRANSP:TRANSPARENT', 'END:VEVENT'].join('\r\n');
   });
-  download('gambada-pla.ics', 'text/calendar', ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Gambada//CA', 'CALSCALE:GREGORIAN', ...ev, 'END:VCALENDAR'].join('\r\n'));
+  download('pacely-pla.ics', 'text/calendar', ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Pacely//CA', 'CALSCALE:GREGORIAN', ...ev, 'END:VCALENDAR'].join('\r\n'));
 }
 
 function exportCsv() {
@@ -505,7 +505,7 @@ function exportCsv() {
   for (const l of Object.values(state.logs).sort((a, b) => a.date.localeCompare(b.date))) {
     rows.push([l.date, l.title, TYPE_INFO[l.type]?.name || l.type, l.status === 'done' ? 'feta' : 'saltada', l.km || '', l.sec ? fmtTime(l.sec) : '', l.sec && l.km ? fmtPace(l.sec / l.km) : '', l.rpe || '', l.notes || '']);
   }
-  download('gambada-historial.csv', 'text/csv', rows.map(r => r.map(c => `"${String(c).replace(/"/g, '""')}"`).join(';')).join('\n'));
+  download('pacely-historial.csv', 'text/csv', rows.map(r => r.map(c => `"${String(c).replace(/"/g, '""')}"`).join(';')).join('\n'));
 }
 
 // ---------- Router ----------
@@ -600,7 +600,7 @@ document.addEventListener('click', e => {
     case 'del-result': state.profile.results.splice(+v, 1); save(); render(); toast('Resultat tret'); break;
     case 'export-ics': exportIcs(); toast('Calendari descarregat'); break;
     case 'export-csv': exportCsv(); toast('CSV descarregat'); break;
-    case 'export-json': download(`gambada-${TODAY}.json`, 'application/json', JSON.stringify(state, null, 2)); toast('Còpia descarregada'); break;
+    case 'export-json': download(`pacely-${TODAY}.json`, 'application/json', JSON.stringify(state, null, 2)); toast('Còpia descarregada'); break;
     case 'theme': state.theme = v || undefined; save(); render(); break;
     case 'reset': ui.confirmReset = true; render(); break;
     case 'reset-no': ui.confirmReset = false; render(); break;
@@ -644,7 +644,7 @@ document.addEventListener('change', e => {
       const data = JSON.parse(txt);
       if (!data.profile || typeof data.logs !== 'object') throw new Error();
       state = { logs: {}, moves: {}, ...data }; ob = null; save(); location.hash = '#avui'; render(); toast('Còpia restaurada');
-    }).catch(() => toast('Aquest fitxer no és una còpia de Gambada.'));
+    }).catch(() => toast('Aquest fitxer no és una còpia de Pacely.'));
   }
 });
 

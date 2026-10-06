@@ -1,4 +1,4 @@
-// Servidor estàtic mínim per provar Gambada en local: node serve.mjs [port]
+// Servidor estàtic mínim per provar Pacely en local: node serve.mjs [port]
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { extname, join, normalize } from 'node:path';
@@ -16,4 +16,4 @@ createServer(async (req, res) => {
     const body = await readFile(file.endsWith('\\') || file.endsWith('/') ? join(file, 'index.html') : file);
     res.writeHead(200, { 'Content-Type': types[extname(file)] || 'application/octet-stream', 'Cache-Control': 'no-cache' }).end(body);
   } catch { res.writeHead(404).end('No trobat'); }
-}).listen(port, () => console.log(`Gambada a http://localhost:${port}`));
+}).listen(port, () => console.log(`Pacely a http://localhost:${port}`));

@@ -18,10 +18,10 @@ const redirectUri = () => location.origin + location.pathname;
 export function authUrl(state, provider) {
   const c = connCfg(state);
   if (provider === 'polar') {
-    const p = new URLSearchParams({ response_type: 'code', client_id: c.polarId, redirect_uri: redirectUri(), scope: 'accesslink.read_all', state: 'gambada-polar' });
+    const p = new URLSearchParams({ response_type: 'code', client_id: c.polarId, redirect_uri: redirectUri(), scope: 'accesslink.read_all', state: 'pacely-polar' });
     return `https://flow.polar.com/oauth2/authorization?${p}`;
   }
-  const p = new URLSearchParams({ client_id: c.stravaId, response_type: 'code', redirect_uri: redirectUri(), approval_prompt: 'auto', scope: 'read,activity:read_all', state: 'gambada-strava' });
+  const p = new URLSearchParams({ client_id: c.stravaId, response_type: 'code', redirect_uri: redirectUri(), approval_prompt: 'auto', scope: 'read,activity:read_all', state: 'pacely-strava' });
   return `https://www.strava.com/oauth/authorize?${p}`;
 }
 
@@ -36,8 +36,8 @@ async function post(url, body) {
 export async function handleRedirect(state) {
   const p = new URLSearchParams(location.search);
   const st = p.get('state');
-  if (st !== 'gambada-polar' && st !== 'gambada-strava') return null;
-  const provider = st.slice(8);
+  if (st !== 'pacely-polar' && st !== 'pacely-strava') return null;
+  const provider = st.split('-')[1];
   const keep = new URLSearchParams(location.search);
   ['state', 'code', 'scope', 'error'].forEach(k => keep.delete(k));
   history.replaceState(null, '', location.pathname + (keep.toString() ? `?${keep}` : '') + '#perfil');
