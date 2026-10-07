@@ -105,8 +105,12 @@ input[type="text"], input[type="date"], input[type="number"], select, textarea {
   width: 100%; padding: 12px 14px; border-radius: 12px; border: 1.5px solid var(--line); background: var(--surface); min-width: 0;
 }
 input.time { font-family: var(--mono); font-size: 1.2rem; }
+/* Les graelles mai s'eixamplen per sobre de l'espai disponible: a l'iPhone, el camp de data
+   demana una amplada mínima més gran que la targeta i, sense això, l'estirava cap a la dreta */
+#app, .screen, .stack, .card, .field, .choices { grid-template-columns: minmax(0, 1fr); }
+.field, .card > *, .stack > *, .choices > * { min-width: 0; }
 /* Data a l'iPhone: Safari li posa estil propi (més ample que la pantalla, text centrat i més baixa si és buida) */
-input[type="date"] { -webkit-appearance: none; appearance: none; display: block; max-width: 100%; min-height: 50px; line-height: 1.3; text-align: left; }
+input[type="date"] { -webkit-appearance: none; appearance: none; display: block; width: 100%; max-width: 100%; min-width: 0; min-height: 50px; line-height: 1.3; text-align: left; overflow: hidden; }
 input[type="date"]::-webkit-date-and-time-value { text-align: left; margin: 0; min-height: 1.3em; }
 input[type="date"]::-webkit-calendar-picker-indicator { cursor: pointer; opacity: 0.7; }
 input[type="range"] { width: 100%; accent-color: var(--accent); }
