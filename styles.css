@@ -86,7 +86,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .tabs a[aria-current="page"] { color: var(--accent); }
 
 /* Onboarding */
-.ob { min-height: calc(100vh - 120px); display: grid; align-content: start; gap: 20px; }
+.ob { min-height: calc(100vh - 120px); min-height: calc(100dvh - 120px); display: grid; align-content: start; gap: 20px; }
 .ob-progress { display: grid; grid-template-columns: repeat(5, 1fr); gap: 4px; }
 .ob-progress i { height: 4px; border-radius: 4px; background: var(--line); }
 .ob-progress i.on { background: var(--accent); }
@@ -170,6 +170,7 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
 @media (max-width: 330px) { .kv { grid-template-columns: 1fr; } }
 
 .rpe { display: grid; grid-template-columns: repeat(10, 1fr); gap: 4px; }
+@media (max-width: 359px) { .rpe { grid-template-columns: repeat(5, 1fr); } }
 .rpe button { border: 1.5px solid var(--line); background: var(--surface); border-radius: 8px; padding: 8px 0; font-weight: 700; cursor: pointer; }
 .rpe button[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
 
@@ -179,7 +180,9 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
 .phases .bars i { display: block; border-radius: 3px 3px 0 0; background: var(--line); }
 .phases .bars i.cur { background: var(--accent); }
 .phases .strip { display: grid; gap: 3px; }
-.phases .strip a { height: 10px; border-radius: 3px; }
+.phases .strip a { height: 10px; border-radius: 3px; position: relative; }
+/* Les barres de setmana són primes: la zona per tocar-les és més alta que la barra */
+.phases .strip a::after { content: ""; position: absolute; inset: -10px 0; }
 .legend { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 0.8rem; color: var(--muted); }
 .legend span { display: inline-flex; gap: 6px; align-items: center; }
 .legend i { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
