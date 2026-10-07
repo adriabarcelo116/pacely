@@ -5,6 +5,7 @@ import { connCfg, authUrl, handleRedirect, syncPolar, fetchBestEffort, parseActi
 import { Recorder, buildSegments, toGpx } from './gps.js';
 import { HeartRate, hrSupported } from './hr.js';
 import { TEMPLATES } from './templates.js';
+import { afterRender, notePress, celebrateDone, confetti, animateToast, removeToast } from './motion.js';
 import { briefing, fetchForecast, weatherAt, heatZones, raceSplits, LIBRARY, libraryItem, RPE_TXT, hrRange, HR_ZONES, paceInsight, sessionAnalysis, THUMB_REASONS, records, achievements } from './coach.js';
 
 // ---------- Estat ----------
@@ -41,8 +42,13 @@ function toast(msg) {
   const t = document.createElement('div');
   t.className = 'toast'; t.setAttribute('role', 'status'); t.textContent = msg;
   document.body.appendChild(t);
-  setTimeout(() => t.remove(), 2600);
+  animateToast(t);
+  setTimeout(() => removeToast(t), 2600);
 }
+
+// Número que compta fins al valor quan apareix (vegeu motion.js)
+const num = (value, fmt, key, text) => `<span data-num="${value}" data-fmt="${fmt}" data-key="${key}">${text}</span>`;
+const pbSnapshot = () => JSON.stringify(Object.values(records(state).pb).map(p => [p.name, p.sec]));
 
 // ---------- Sincronització ----------
 const SRC = { polar: 'Polar Flow', file: 'fitxer', gps: 'GPS del mòbil' };
@@ -221,6 +227,7 @@ function renderOnboarding() {
       ${nav('Generar el pla')}`;
   }
   app.innerHTML = `<section class="ob screen">${body}</section>`;
+  afterRender(`ob${ob.step}`, app);
 }
 
 function obProfile() {
@@ -337,7 +344,7 @@ function header(title, sub) {
   const raceIso = iso(PLAN.frame.race);
   const days = Math.round((fromIso(raceIso) - fromIso(TODAY)) / 864e5);
   return `<div class="top"><div><div class="brand">${ICON.logo} Pacely</div><h1>${title}</h1>${sub ? `<p class="muted">${sub}</p>` : ''}</div>
-    ${days >= 0 ? `<div class="count"><span class="label">Falten</span><b>${days}</b><span class="small muted">dies</span></div>` : ''}</div>`;
+    ${days >= 0 ? `<div class="count"><span class="label">Falten</span><b>${num(days, 'int', 'days', days)}</b><span class="small muted">dies</span></div>` : ''}</div>`;
 }
 
 // ---------- Pantalles ----------
@@ -394,8 +401,13 @@ function screenToday() {
     <div class="weekstrip">${strip}</div>
     ${pendingHtml}
     ${main}
-    <div class="kv"><div><span class="label">Aquesta setmana</span><b>${kmTxt(doneKm)}<span class="small muted"> / ${w.vol} km</span></b></div>
-      <div><span class="label">Predicció</span><b>${fmtTime(pred)}</b></div>
+    ${(() => {
+      const frac = w.vol ? Math.min(1, doneKm / w.vol) : 0;
+      const doneRuns = runs.filter(s => state.logs[s.id]?.status === 'done').length;
+      return `<div class="card ringwrap"><svg class="ring" viewBox="0 0 76 76" data-key="week${w.idx}" aria-hidden="true"><circle class="ring-t" cx="38" cy="38" r="31" pathLength="100"/><circle class="ring-p" cx="38" cy="38" r="31" pathLength="100" style="stroke-dashoffset:${100 - frac * 100}"/></svg>
+        <div><span class="label">Aquesta setmana</span><br><b>${num(doneKm, 'km', `wkm${w.idx}`, kmTxt(doneKm))}</b><span class="muted"> de ${w.vol} km</span><br><span class="small muted">${doneRuns} de ${runs.length} sessions fetes</span></div></div>`;
+    })()}
+    <div class="kv" style="grid-template-columns:repeat(2,1fr)"><div><span class="label">Predicció</span><b>${num(pred, 'time', 'pred', fmtTime(pred))}</b></div>
       <div><span class="label">Objectiu</span><b>${goal ? fmtTime(goal) : '–'}</b></div></div>
     ${paceCard()}
     ${ev.length ? `<div class="card"><span class="label">El pla s'ha adaptat</span><div class="list">${ev.map(e => `<div class="ev ${e.kind}"><i></i><span>${esc(e.text)}</span></div>`).join('')}</div></div>` : ''}
@@ -583,8 +595,8 @@ function screenHistory() {
   const bw = 600 / W.length;
   const chart = `<svg class="chart" viewBox="0 0 620 170" role="img" aria-label="Quilòmetres per setmana: previstos i fets">
     ${[0, 0.5, 1].map(f => `<line x1="20" x2="620" y1="${150 - f * 130}" y2="${150 - f * 130}" stroke="var(--line)" stroke-width="1"/><text x="0" y="${154 - f * 130}">${Math.round(mx * f)}</text>`).join('')}
-    ${W.map((w, i) => `<rect x="${22 + i * bw}" y="${150 - (w.vol / mx) * 130}" width="${bw - 4}" height="${(w.vol / mx) * 130}" rx="2" fill="var(--surface-2)"/>
-      <rect x="${22 + i * bw}" y="${150 - (doneByWeek[i] / mx) * 130}" width="${bw - 4}" height="${(doneByWeek[i] / mx) * 130}" rx="2" fill="${i === PLAN.current.idx ? 'var(--sun)' : 'var(--accent)'}"/>
+    ${W.map((w, i) => `<rect class="bar" x="${22 + i * bw}" y="${150 - (w.vol / mx) * 130}" width="${bw - 4}" height="${(w.vol / mx) * 130}" rx="2" fill="var(--surface-2)"/>
+      <rect class="bar" x="${22 + i * bw}" y="${150 - (doneByWeek[i] / mx) * 130}" width="${bw - 4}" height="${(doneByWeek[i] / mx) * 130}" rx="2" fill="${i === PLAN.current.idx ? 'var(--sun)' : 'var(--accent)'}"/>
       ${i % 2 === 0 || W.length < 12 ? `<text x="${22 + i * bw + (bw - 4) / 2}" y="166" text-anchor="middle">${i + 1}</text>` : ''}`).join('')}
   </svg>`;
 
@@ -592,7 +604,7 @@ function screenHistory() {
   const preds = ['5k', '10k', '21k', '42k'].map(k => [DIST[k].name, predict(PLAN.vdotNow, DIST[k].m)]);
 
   return `${header('Historial')}
-    <div class="kv"><div><span class="label">Km fets</span><b>${kmTxt(totKm)}</b></div><div><span class="label">Temps</span><b>${dur(totSec)}</b></div><div><span class="label">Compliment</span><b>${comp} %</b></div></div>
+    <div class="kv"><div><span class="label">Km fets</span><b>${num(totKm, 'km', 'hkm', kmTxt(totKm))}</b></div><div><span class="label">Temps</span><b>${dur(totSec)}</b></div><div><span class="label">Compliment</span><b>${num(comp, 'pct', 'hcomp', `${comp} %`)}</b></div></div>
     <div class="card"><div class="row between"><span class="label">Km per setmana</span><span class="legend"><span><i style="background:var(--surface-2)"></i>Previst</span><span><i style="background:var(--accent)"></i>Fet</span></span></div>${chart}</div>
     <div class="card"><span class="label">Forma (VDOT) i prediccions</span>
       <div class="row between"><span>Ara</span><b class="mono">${PLAN.vdotNow.toFixed(1)}</b></div>
@@ -635,7 +647,7 @@ function statsCard(runLogs, extras) {
   return `<div class="card"><div class="row between"><span class="label">Km per mes · ${year}</span><span class="row"><button class="btn ghost sm" data-a="stat-year" data-v="-1" aria-label="Any anterior">‹</button><button class="btn ghost sm" data-a="stat-year" data-v="1" aria-label="Any següent">›</button></span></div>
     <svg class="chart" viewBox="0 0 620 150" role="img" aria-label="Quilòmetres per mes de ${year}">
       ${[0, 0.5, 1].map(f => `<line x1="24" x2="620" y1="${125 - f * 105}" y2="${125 - f * 105}" stroke="var(--line)"/><text x="0" y="${129 - f * 105}">${Math.round(mx * f)}</text>`).join('')}
-      ${months.map((v, i) => `<rect x="${30 + i * 49}" y="${125 - (v / mx) * 105}" width="40" height="${(v / mx) * 105}" rx="3" fill="${year === +TODAY.slice(0, 4) && i === +TODAY.slice(5, 7) - 1 ? 'var(--sun)' : 'var(--accent)'}"/>
+      ${months.map((v, i) => `<rect class="bar" x="${30 + i * 49}" y="${125 - (v / mx) * 105}" width="40" height="${(v / mx) * 105}" rx="3" fill="${year === +TODAY.slice(0, 4) && i === +TODAY.slice(5, 7) - 1 ? 'var(--sun)' : 'var(--accent)'}"/>
         ${v ? `<text x="${50 + i * 49}" y="${120 - (v / mx) * 105}" text-anchor="middle">${Math.round(v)}</text>` : ''}<text x="${50 + i * 49}" y="143" text-anchor="middle">${M[i]}</text>`).join('')}
     </svg>
     <table class="table"><tr><th>Any</th><th>Km</th><th>Sortides</th><th>Temps</th></tr>${(years.length ? years : [year]).map(y => { const t = yTot(y); return `<tr><td>${y}</td><td class="mono">${kmTxt(t.km)}</td><td class="mono">${t.n}</td><td class="mono">${dur(t.sec)}${t.cross ? ` + ${dur(t.cross * 60)} creuat` : ''}</td></tr>`; }).join('')}</table>
@@ -870,12 +882,16 @@ async function saveRun() {
   const a = RUN.finish();
   RUN = null; ui.runConfirm = false; ui.runMsg = '';
   if (a.km < 0.05) { toast('La cursa és massa curta i no s\'ha desat.'); location.hash = '#avui'; return; }
+  const pbBefore = pbSnapshot();
   state.activities[a.key] = a;
   const s = a.sessionId && findSession(a.sessionId);
   if (s && !state.logs[s.id]) state.logs[s.id] = logFor(s, a);
   save();
   location.hash = s ? `#s/${s.id}` : '#historial';
   await finishImport();
+  const isPb = pbSnapshot() !== pbBefore;
+  celebrateDone(isPb ? 'Nou rècord!' : 'Cursa desada');
+  if (isPb) confetti();
   toast(`Cursa desada: ${kmTxt(a.km)} km en ${fmtTime(a.sec)}. Indica l'esforç a sota.`);
 }
 
@@ -894,7 +910,7 @@ function checkBadges() {
     const fresh = done.filter(id => !(state.badges || []).includes(id));
     if (!fresh.length) return;
     state.badges = done; save();
-    if (!first) setTimeout(() => toast(`🏅 Nou assoliment: ${list.find(a => a.id === fresh[0]).name}`), 400);
+    if (!first) setTimeout(() => { confetti(); toast(`🏅 Nou assoliment: ${list.find(a => a.id === fresh[0]).name}`); }, 400);
   } catch { /* els assoliments no han de trencar mai l'app */ }
 }
 
@@ -914,6 +930,7 @@ function render() {
   document.body.classList.toggle('running', route === 'run');
   const html = route === 'run' ? screenRun(arg) : route === 's' ? screenSession(arg) : route === 'e' ? screenLibItem(arg) : (map[route] || screenToday)();
   app.innerHTML = `<div class="screen stack" style="gap:18px">${html}</div>`;
+  afterRender(location.hash.slice(1) || 'avui', app);
   if (route === 'pla') document.querySelector('details.week[open]')?.scrollIntoView({ block: 'center' });
 }
 
@@ -923,6 +940,7 @@ window.addEventListener('hashchange', () => { ui.draft = null; ui.confirmReset =
 document.addEventListener('click', e => {
   const el = e.target.closest('[data-a]');
   if (!el) return;
+  notePress(el);
   const a = el.dataset.a, v = el.dataset.v, k = el.dataset.k;
   if (a.startsWith('ob-') || (a === 'ob-set')) readObInputs();
   switch (a) {
@@ -931,7 +949,7 @@ document.addEventListener('click', e => {
       if (ob.step === 5) {
         state.profile = obProfile();
         ob = null; save(); location.hash = '#avui'; render();
-        toast('Pla creat. Som-hi!');
+        celebrateDone('Pla creat. Som-hi!');
         return;
       }
       // El pla preparat ja té data i dies: de la distància passa a la forma, i de la forma al resum
@@ -977,7 +995,7 @@ document.addEventListener('click', e => {
     }
     case 'quick-rpe': {
       const l = state.logs[el.dataset.id];
-      if (l) { l.rpe = +v; l.needsRpe = false; save(); render(); toast('Esforç desat'); }
+      if (l) { l.rpe = +v; l.needsRpe = false; save(); render(); celebrateDone('Desat'); }
       break;
     }
     case 'connect': {
@@ -1127,6 +1145,7 @@ document.addEventListener('submit', e => {
     if (d.status === 'done' && (s.type === 'test' || s.type === 'race') && !sec) { toast('Escriu el temps per poder recalcular els ritmes.'); return; }
     if (d.status === 'done' && s.km && d.time && !sec) { toast('El temps ha de ser com 45:30 o 1:05:00.'); return; }
     const prev = state.logs[id] || {};
+    const pbBefore = pbSnapshot();
     state.logs[id] = {
       ...prev, needsRpe: false, needsTime: false,
       id, date: s.date, type: s.type, title: s.title, status: d.status,
@@ -1136,7 +1155,10 @@ document.addEventListener('submit', e => {
     };
     const before = PLAN.events.length;
     save(); ui.draft = null; render();
-    toast(PLAN.events.length > before ? 'Desat. El pla s\'ha adaptat: mira la pantalla Avui.' : 'Sessió desada');
+    const isPb = d.status === 'done' && pbSnapshot() !== pbBefore;
+    if (d.status === 'done') celebrateDone(isPb ? 'Nou rècord!' : 'Sessió desada');
+    if (isPb) confetti();
+    toast(isPb ? '🏅 Nou rècord personal!' : PLAN.events.length > before ? 'Desat. El pla s\'ha adaptat: mira la pantalla Avui.' : d.status === 'done' ? 'Sessió desada' : 'Anotat. No passa res.');
   }
   if (e.target.id === 'connCfg') {
     const g = id => document.getElementById(id).value.trim();

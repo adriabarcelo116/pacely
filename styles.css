@@ -219,7 +219,53 @@ body.running { padding-bottom: env(safe-area-inset-bottom, 0px); }
 .table { width: 100%; border-collapse: collapse; font-size: 0.92rem; }
 .table td, .table th { padding: 8px 4px; border-bottom: 1px solid var(--line); text-align: left; }
 .table th { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
+/* ---------- Moviment (skill pacely-animacions) ---------- */
+:root { --ease-out: cubic-bezier(0.22, 1, 0.36, 1); --ease-bounce: cubic-bezier(0.34, 1.56, 0.64, 1); }
+svg.chart rect.bar { transform-box: fill-box; transform-origin: 50% 100%; }
+.phases .bars i { transform-origin: 50% 100%; }
+
+/* Anell de progrés */
+.ringwrap { display: flex; align-items: center; gap: 16px; }
+.ring { width: 76px; height: 76px; flex: none; transform: rotate(-90deg); }
+.ring circle { fill: none; stroke-width: 9; stroke-linecap: round; }
+.ring .ring-t { stroke: var(--surface-2); }
+.ring .ring-p { stroke: var(--accent); stroke-dasharray: 100; }
+.ringwrap b { font-family: var(--display); font-size: 1.6rem; line-height: 1; }
+
+/* Sessió desada */
+.done-pop { position: fixed; left: 50%; top: 42%; transform: translate(-50%, -50%); z-index: 30; pointer-events: none;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 22px; padding: 18px 26px 14px; display: grid; justify-items: center; gap: 6px;
+  box-shadow: 0 12px 40px color-mix(in srgb, var(--ink) 18%, transparent); font-weight: 700; }
+.done-pop svg { width: 56px; height: 56px; }
+.done-pop .dp-c { fill: none; stroke: var(--ok); stroke-width: 4; stroke-dasharray: 100; stroke-dashoffset: 100; }
+.done-pop .dp-k { fill: none; stroke: var(--ok); stroke-width: 5; stroke-linecap: round; stroke-linejoin: round; stroke-dasharray: 100; stroke-dashoffset: 100; }
+.confetti { position: fixed; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 29; }
+
+@media (prefers-reduced-motion: reduce) {
+  .done-pop .dp-c, .done-pop .dp-k { stroke-dashoffset: 0; }
+}
 @media (prefers-reduced-motion: no-preference) {
-  .screen { animation: fade 0.18s ease-out; }
-  @keyframes fade { from { opacity: 0.4; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+  /* Resposta en tocar: s'enfonsa una mica i torna amb un rebot molt lleu */
+  .btn, .chip, .choice, .sess, .rpe button, .weekstrip a, .cal-d, .tabs a, details.week summary, .st {
+    transition: transform 180ms var(--ease-bounce), background-color 150ms ease, color 150ms ease, border-color 150ms ease, box-shadow 150ms ease, opacity 150ms ease;
+  }
+  .btn:active, .chip:active, .choice:active, .rpe button:active, .weekstrip a:active, .cal-d:active, .st:active { transform: scale(0.97); transition-duration: 100ms; }
+  .sess:active, details.week summary:active { transform: scale(0.985); transition-duration: 100ms; }
+  @keyframes press-pop { 0% { transform: scale(0.94); } 100% { transform: scale(1); } }
+  /* Pestanya activa: la icona fa un petit salt */
+  .tabs a svg { transition: transform 220ms var(--ease-bounce); }
+  .tabs a[aria-current="page"] svg { transform: translateY(-2px) scale(1.08); }
+  /* Obrir una setmana del pla */
+  details.week[open] .body > * { animation: rise 260ms var(--ease-out) backwards; }
+  details.week[open] .body > *:nth-child(2) { animation-delay: 30ms; }
+  details.week[open] .body > *:nth-child(3) { animation-delay: 60ms; }
+  details.week[open] .body > *:nth-child(4) { animation-delay: 90ms; }
+  details.week[open] .body > *:nth-child(n+5) { animation-delay: 120ms; }
+  @keyframes rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+  /* Marca de sessió feta */
+  .st.done { animation: press-pop 320ms var(--ease-bounce); }
+  /* Assoliments aconseguits */
+  .badge.on { animation: rise 320ms var(--ease-out) backwards; }
+  /* Si la pantalla només s'ha redibuixat (mateixa ruta), no repetim les entrades */
+  #app.still details.week[open] .body > *, #app.still .badge.on, #app.still .st.done { animation: none; }
 }
