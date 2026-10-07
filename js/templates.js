@@ -45,7 +45,54 @@ const G = [
   ['taper', 0, longFinish(8, 4), reps(6, 0.8, 120), tempo(4), 1, 'Baixa el volum i mantén la intensitat.'],
 ];
 
+// ---------- Caminar-córrer i tornar a córrer (per temps) ----------
+const mmss = s => (s % 60 ? `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}` : `${s / 60}`);
+const rw = (n, run, walk) => ({
+  type: 'runwalk', title: `${n} × (${mmss(run)} min córrer / ${mmss(walk)} min caminar)`,
+  steps: [{ k: 'walk', sec: 300, label: '5 min caminant per escalfar' }, { k: 'rw', n, run, walk }, { k: 'walk', sec: 300, label: '5 min caminant per acabar' }],
+  note: 'Córrer tan suau que puguis parlar. Si no pots, alenteix: no és cap cursa.',
+});
+const runFor = (min, strides) => ({
+  type: 'easy', title: `Córrer ${min} min seguits${strides ? ' + rectes' : ''}`,
+  steps: [{ k: 'walk', sec: 300, label: '5 min caminant per escalfar' }, { k: 'time', sec: min * 60, z: 'E', label: `${min} min a ritme suau` }, ...(strides ? [{ k: 'strides', n: 4, label: '4 rectes de 100 m' }] : []), { k: 'walk', sec: 300, label: '5 min caminant' }],
+  note: 'Ritme conversacional de principi a final.',
+});
+
+// [sessió 1, sessió 2, sessió 3] per setmana; es posen als 3 primers dies que triïs
+const START = [
+  [rw(8, 60, 90), rw(8, 60, 90), rw(8, 60, 90)],
+  [rw(6, 90, 90), rw(6, 90, 90), rw(6, 90, 90)],
+  [rw(5, 180, 90), rw(5, 180, 90), rw(5, 180, 90)],
+  [rw(4, 300, 120), rw(4, 300, 120), rw(4, 300, 120)],
+  [rw(3, 480, 120), rw(3, 480, 120), rw(3, 480, 120)],
+  [rw(2, 720, 120), rw(2, 720, 120), rw(2, 720, 120)],
+  [runFor(20), runFor(20), runFor(22)],
+  [runFor(25), runFor(25), runFor(25)],
+  [runFor(28), runFor(30), test(5000)],
+];
+const RETURN = [
+  [rw(6, 240, 60), rw(6, 240, 60), rw(6, 240, 60)],
+  [rw(5, 360, 60), rw(5, 360, 60), rw(5, 360, 60)],
+  [runFor(20), runFor(20), runFor(20)],
+  [runFor(25), runFor(25), runFor(30)],
+  [runFor(30), runFor(30, true), runFor(35)],
+  [runFor(35, true), runFor(40), runFor(45)],
+];
+const relative = (id, name, short, desc, rows, note) => ({
+  id, name, short, desc, distance: '5k', raceDate: null, raceName: '', days: null, longDay: null, strength: 0, mobility: false, weeks: rows.length, relative: true,
+  week(w, days) {
+    const d = [...(days || [1, 3, 5])].sort((a, b) => a - b).slice(0, 3);
+    return { phase: w < rows.length / 2 ? 'base' : w < rows.length - 1 ? 'build' : 'taper', deload: false, note: w === 0 ? note : '', items: rows[w].map((s, i) => [d[i % d.length], s]) };
+  },
+});
+
 export const TEMPLATES = {
+  start5k: relative('start5k', 'Començar a córrer: de 0 a 5K', 'Començar a córrer',
+    '9 setmanes · 3 dies · alternes caminar i córrer fins a córrer 30 min seguits i fer un 5K',
+    START, 'Si una setmana se\'t fa massa dura, repeteix-la abans de passar a la següent. Avançar a poc a poc és la clau.'),
+  return: relative('return', 'Tornar a córrer després d\'una aturada', 'Tornar a córrer',
+    '6 setmanes · 3 dies · de caminar-córrer a 45 min seguits, per tornar sense lesionar-te',
+    RETURN, 'Si tens dolor durant o l\'endemà de córrer, torna a la setmana anterior. Sense presses.'),
   girona27: {
     id: 'girona27', name: 'Mitja Marató de Girona 2027', short: 'Pla de Girona',
     distance: '21k', raceDate: '2027-02-28', raceName: 'Mitja Marató de Girona', startDate: '2026-10-06',

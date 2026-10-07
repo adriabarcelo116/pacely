@@ -47,14 +47,14 @@ export function planFrame(profile) {
   let startMon = monday(fromIso(profile.startDate));
   const race = profile.raceDate
     ? fromIso(profile.raceDate)
-    : addDays(startMon, (profile.weeks - 1) * 7 + profile.longDay);
+    : addDays(startMon, (profile.weeks - 1) * 7 + (profile.longDay ?? Math.max(...profile.days)));
   let n = Math.round((monday(race) - startMon) / 6048e5) + 1;
   let delayed = false;
   if (n > 26) { startMon = addDays(monday(race), -25 * 7); n = 26; delayed = true; }
   n = Math.max(1, n);
   const tpl = TEMPLATES[profile.template];
   if (tpl) {
-    const phases = Array.from({ length: n }, (_, w) => tpl.week(w).phase);
+    const phases = Array.from({ length: n }, (_, w) => tpl.week(Math.min(w, tpl.weeks - 1), profile.days).phase);
     const taper = phases.filter(x => x === 'taper').length;
     return { startMon, race, n, taper, pre: n - taper, phases, delayed, template: tpl };
   }
@@ -70,6 +70,9 @@ export function stepsKm(steps) {
     if (s.k === 'rep') km += s.n * s.km + (s.n - 1) * ((s.recKm || 0) + (s.rec || 0) / 60 * 0.15);
     else if (s.k === 'fart') km += s.n * 0.38;
     else if (s.k === 'hill') km += s.n * 0.3;
+    else if (s.k === 'walk') km += s.sec / 720;
+    else if (s.k === 'rw') km += s.n * (s.run / 420 + s.walk / 720);
+    else if (s.k === 'time') km += s.sec / 420;
     else if (s.k === 'strides') km += s.n * 0.15;
     else km += s.km || 0;
   }
@@ -218,6 +221,7 @@ export const ADJUST_INFO = {
   sick: { name: 'Estic malalt o lesionat', help: 'Treu totes les sessions d\'aquests dies. Després, 3 dies només suaus.' },
   busy: { name: 'Setmana complicada', help: 'Et quedes amb la tirada llarga i la sessió de qualitat més important. Fora rodatges i força.' },
   break: { name: 'Torno d\'una aturada', help: 'Una setmana per tornar-hi: tot suau i un 30 % menys de quilòmetres.' },
+  holiday: { name: 'Vacances o pausa', help: 'Tria els dies. Pots no córrer gens o fer només rodatges suaus. A la tornada, uns dies tranquils per reprendre.' },
 };
 const QUALITY = ['int', 'tempo', 'fartlek', 'hills', 'test'];
 
@@ -243,11 +247,17 @@ export function applyAdjustments(sessions, adjusts, logs) {
     let x = s, drop = false;
     for (const a of adjusts) {
       const inRange = x.date >= a.from && x.date <= a.to;
-      const after = a.kind === 'sick' && x.date > a.to && x.date <= iso(addDays(fromIso(a.to), 3));
+      const longGap = a.kind === 'holiday' && !a.easyOnly && (fromIso(a.to) - fromIso(a.from)) / 864e5 >= 4;
+      const after = (a.kind === 'sick' || longGap) && x.date > a.to && x.date <= iso(addDays(fromIso(a.to), a.kind === 'sick' ? 3 : 4));
       const why = ADJUST_INFO[a.kind].name;
-      if (after && QUALITY.includes(x.type)) x = softened(x, 0.7, 'Tornes de estar malalt: avui només suau.');
+      if (after && QUALITY.includes(x.type)) x = softened(x, 0.7, a.kind === 'sick' ? 'Tornes d\'estar malalt: avui només suau.' : 'Tornes de vacances: primer uns dies suaus.');
       if (!inRange) continue;
       if (a.kind === 'sick') { drop = true; break; }
+      if (a.kind === 'holiday') {
+        if (!a.easyOnly || !x.km) { drop = true; break; }
+        if (QUALITY.includes(x.type)) x = softened(x, 0.7, 'Vacances: només rodatges suaus.');
+        else x = shortened(x, 0.7, why);
+      }
       if (a.kind === 'tired' || a.kind === 'break') {
         const frac = a.kind === 'break' ? 0.7 : 0.8;
         if (QUALITY.includes(x.type)) x = softened(x, frac, `${why}: avui toca suau.`);
@@ -291,11 +301,13 @@ export function buildPlan(state, todayIso) {
   results.sort((a, b) => a.date.localeCompare(b.date));
 
   let vdot = vdotFrom(results[0].distM, results[0].sec);
-  let ri = 1, bumps = 0, factorNext = 1, goodPrev = false;
+  let ri = 1, factorNext = 1;
   const events = [];
   const vdotHist = [];
   const weeks = [];
-  let progIdx = 0, testCount = 0, lastLong = 0;
+  let progIdx = 0, testCount = 0, lastLong = 0, pi = 0;
+  const paceAdj = [...(p.paceAdj || [])].sort((a, b) => a.date.localeCompare(b.date));
+  const DIFF = { '-1': [0.85, -0.6], 0: [1, 0], 1: [1.12, 0.4] }[p.difficulty || 0];
 
   for (let w = 0; w < frame.n; w++) {
     const wStart = addDays(frame.startMon, w * 7);
@@ -309,9 +321,14 @@ export function buildPlan(state, todayIso) {
         events.push({ date: r.date, week: w, kind: nv >= vdot ? 'up' : 'down',
           text: `${label}: forma ${nv.toFixed(1)} (abans ${vdot.toFixed(1)}). Ritmes recalculats.` });
       }
-      vdot = nv; bumps = 0;
+      vdot = nv;
     }
-    const tw = frame.template ? frame.template.week(w) : null;
+    const tw = frame.template ? frame.template.week(Math.min(w, frame.template.weeks - 1), p.days) : null;
+    while (pi < paceAdj.length && paceAdj[pi].date <= wEndIso) {
+      const a = paceAdj[pi++];
+      vdot += a.delta;
+      events.push({ date: a.date, week: w, kind: a.delta > 0 ? 'up' : 'down', text: a.delta > 0 ? 'Has acceptat ritmes més ràpids.' : 'Has acceptat ritmes més suaus.' });
+    }
     const phase = frame.phases[w];
     const deload = tw ? tw.deload : w < frame.pre && (w + 1) % 4 === 0 && w !== frame.pre - 1;
     const isRaceWeek = w === frame.n - 1;
@@ -324,10 +341,10 @@ export function buildPlan(state, todayIso) {
       if (deload) vol *= 0.75; else progIdx++;
     }
     const factor = factorNext;
-    vol *= factor;
+    vol *= factor * DIFF[0];
 
     const racePace = p.goalSec ? p.goalSec / (D.m / 1000) : predict(vdot, D.m) / (D.m / 1000);
-    const z = zones(vdot, racePace);
+    const z = zones(vdot + DIFF[1], racePace);
     vdotHist.push({ week: w, date: wStartIso, vdot });
 
     const ctx = { phase, deload, vol, dist: p.distance, level: p.level, daysN, wInPhase };
@@ -341,10 +358,14 @@ export function buildPlan(state, todayIso) {
       // Pla preparat: sessions fixes. Si la setmana anterior ha anat malament, retallem els trams suaus.
       for (const [d, s] of tw.items) {
         if (!s.steps.length) { add(d, s); continue; }
-        const cut = factor < 1 && s.type !== 'race' && s.type !== 'test';
-        const steps = cut ? s.steps.map(st => (st.k === 'run' && st.z === 'E' ? { ...st, km: Math.max(2, Math.round(st.km * factor * 2) / 2) } : st)) : s.steps;
+        const scale = factor * DIFF[0];
+        const cut = scale !== 1 && s.type !== 'race' && s.type !== 'test';
+        const steps = cut ? s.steps.map(st => (st.k === 'run' && st.z === 'E' ? { ...st, km: Math.max(2, Math.round(st.km * scale * 2) / 2) }
+          : st.k === 'time' ? { ...st, sec: Math.round((st.sec * scale) / 60) * 60, label: `${Math.round((st.sec * scale) / 60)} min a ritme suau` } : st)) : s.steps;
         const x = Object.assign(mk(s.type, s.title, steps, s.note), s.distM ? { distM: s.distM } : {});
-        if (cut && x.km < stepsKm(s.steps)) {
+        if (cut && s.type === 'long') x.title = x.title.replace(/^Tirada llarga [\d,]+ km/, `Tirada llarga ${String(x.km).replace('.', ',')} km`);
+        if (cut && s.type === 'easy' && /^Córrer \d+ min/.test(s.title)) x.title = s.title.replace(/\d+ min/, `${Math.round((steps.find(st => st.k === 'time')?.sec || 0) / 60)} min`);
+        if (cut && factor < 1 && x.km < stepsKm(s.steps)) {
           if (s.type === 'long') x.title = x.title.replace(/^Tirada llarga [\d,]+ km/, `Tirada llarga ${String(x.km).replace('.', ',')} km`);
           x.note = `Retallada a ${String(x.km).replace('.', ',')} km per com va anar la setmana anterior. ${s.note}`.trim();
         }
@@ -412,6 +433,16 @@ export function buildPlan(state, todayIso) {
     }
     }
 
+    // Ioga i estiraments als dies lliures
+    if (p.yoga && !isRaceWeek) {
+      const busy = new Set(sessions.map(s => dow(fromIso(s.date))));
+      const freeY = [4, 0, 2, 6, 1, 3, 5].filter(d => !busy.has(d));
+      for (let i = 0; i < p.yoga; i++) {
+        const d = freeY[i] ?? p.longDay ?? 6;
+        add(d, { type: 'yoga', title: i === 0 ? 'Ioga per a corredors' : 'Estiraments i estabilitat', routine: i === 0 ? 'Y' : 'S', steps: [], km: 0, note: freeY[i] === undefined ? 'Després de córrer, el mateix dia.' : '' });
+      }
+    }
+
     // Moure sessions (l'usuari pot canviar el dia dins la setmana)
     for (const s of sessions) {
       const to = state.moves?.[s.id];
@@ -436,22 +467,14 @@ export function buildPlan(state, todayIso) {
       const easyLogs = L.filter(l => (l.type === 'easy' || l.type === 'long') && l.status !== 'skipped' && l.rpe);
       const easyAvg = easyLogs.length ? easyLogs.reduce((a, l) => a + l.rpe, 0) / easyLogs.length : 0;
       const longSkipped = runs.some(s => s.type === 'long' && logs[s.id]?.status === 'skipped');
-      const good = q.length > 0 && qLogs.length === q.length && qLogs.every(l => l.status === 'done' && l.rpe && l.rpe <= 7);
+      // Els canvis de ritme ara els proposa "Estat dels ritmes" i els acceptes tu; aquí només ajustem el volum.
       if (skipped >= 2 || (longSkipped && runs.length <= 3)) {
         factorNext = 0.85;
         events.push({ date: wEndIso, week: w + 1, kind: 'down', text: `Setmana ${w + 1}: t'has saltat ${skipped} ${skipped === 1 ? 'sessió' : 'sessions'}. La setmana ${w + 2} baixa un 15 % de volum per tornar-hi amb calma.` });
-        goodPrev = false;
       } else if (hard >= 2 || easyAvg >= 7.5) {
         factorNext = 0.9;
         events.push({ date: wEndIso, week: w + 1, kind: 'down', text: `Setmana ${w + 2}: −10 % de volum per fatiga (${hard >= 2 ? `${hard} sessions amb esforç ≥ 9` : 'els rodatges suaus et costen massa'}).` });
-        goodPrev = false;
-      } else if (good) {
-        if (goodPrev && bumps < 1.5 && phase !== 'taper') {
-          vdot += 0.3; bumps += 0.3;
-          events.push({ date: wEndIso, week: w + 1, kind: 'up', text: `Dues setmanes seguides amb les sessions de qualitat ben resoltes. Els ritmes pugen una mica a partir de la setmana ${w + 2}.` });
-          goodPrev = false;
-        } else goodPrev = true;
-      } else goodPrev = false;
+      }
     }
   }
 
@@ -471,6 +494,8 @@ export function estSeconds(session, zonesObj) {
     else if (st.k === 'fart') s += st.n * 120;
     else if (st.k === 'hill') s += st.n * (st.sec + 90);
     else if (st.k === 'strides') s += st.n * 60;
+    else if (st.k === 'walk' || st.k === 'time') s += st.sec;
+    else if (st.k === 'rw') s += st.n * (st.run + st.walk);
     else s += (st.km || 0) * pace(st.z === 'TEST' ? 'I' : st.z);
     if (st.strides) s += st.strides * 60;
   }

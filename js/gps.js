@@ -37,6 +37,16 @@ export function buildSegments(session, zones) {
       for (let i = 0; i < st.n; i++) { add(`Ràpid · ${i + 1} de ${st.n}`, 'time', 60, 'I', true); if (i < st.n - 1) add('Suau', 'time', 60, null); }
     } else if (st.k === 'hill') {
       for (let i = 0; i < st.n; i++) { add(`Pujada forta · ${i + 1} de ${st.n}`, 'time', st.sec, null, true); if (i < st.n - 1) add('Baixa trotant', 'time', 90, null); }
+    } else if (st.k === 'walk') {
+      add(st.label || `Camina ${Math.round(st.sec / 60)} min`, 'time', st.sec, null);
+    } else if (st.k === 'time') {
+      add(`Corre ${Math.round(st.sec / 60)} min suau`, 'time', st.sec, st.z || 'E');
+    } else if (st.k === 'rw') {
+      const m = s => (s % 60 ? `${Math.floor(s / 60)} min ${s % 60} s` : `${s / 60} min`);
+      for (let i = 0; i < st.n; i++) {
+        add(`Corre ${m(st.run)} · ${i + 1} de ${st.n}`, 'time', st.run, 'E', true);
+        add(`Camina ${m(st.walk)}`, 'time', st.walk, null);
+      }
     } else if (st.k === 'strides') {
       for (let i = 0; i < st.n; i++) { add(`Recta ràpida ${i + 1} de ${st.n}`, 'time', 20, null, true); add('Trota suau', 'time', 40, null); }
     }
@@ -69,8 +79,8 @@ export const paceWords = sec => {
 
 // ---------- Gravadora ----------
 export class Recorder {
-  constructor({ sessionId = null, segments, title, onUpdate, onEvent, fuelEvery = 0 }) {
-    Object.assign(this, { sessionId, segments, title, onUpdate, onEvent, fuelEvery });
+  constructor({ sessionId = null, segments, title, onUpdate, onEvent, fuelEvery = 0, targetSpeech = null, noPaceAlerts = false }) {
+    Object.assign(this, { sessionId, segments, title, onUpdate, onEvent, fuelEvery, targetSpeech, noPaceAlerts });
     this.s = { sessionId, title, startedAt: null, pts: [], dist: 0, moving: 0, paused: false, seg: 0, segD: 0, segT: 0, kmSaid: 0, lastAlert: 0, muted: false, hrSum: 0, hrN: 0, hrMax: 0, hrs: [] };
     this.watch = null; this.timer = null; this.lock = null; this.lastTick = 0; this.acc = null; this.lastFix = 0;
     this.hr = null; // font de pulsacions (HeartRate), opcional
@@ -190,7 +200,9 @@ export class Recorder {
   segIntro() {
     const sg = this.segment;
     let t = sg.label.replace(/·/g, ',');
-    if (sg.pace) t += `. Ritme entre ${paceWords(sg.pace[0])} i ${paceWords(sg.pace[1])}`;
+    const custom = this.targetSpeech?.(sg);
+    if (custom) t += `. ${custom}`;
+    else if (sg.pace) t += `. Ritme entre ${paceWords(sg.pace[0])} i ${paceWords(sg.pace[1])}`;
     return t;
   }
 
@@ -217,7 +229,7 @@ export class Recorder {
 
   checkPace() {
     const sg = this.segment;
-    if (!sg.pace || this.s.paused || Date.now() - this.s.lastAlert < 45000) return;
+    if (this.noPaceAlerts || !sg.pace || this.s.paused || Date.now() - this.s.lastAlert < 45000) return;
     if (this.segProgress().done < (sg.kind === 'dist' ? 150 : 20)) return;
     const p = this.currentPace();
     if (!isFinite(p)) return;

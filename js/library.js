@@ -52,6 +52,33 @@ export const ROUTINES = {
   },
 };
 
+ROUTINES.Y = {
+  name: 'Ioga per a corredors · 20 min',
+  min: 20,
+  focus: 'Flexibilitat de malucs i esquena, respiració i equilibri. Ideal en un dia de descans o després d\'un rodatge suau.',
+  ex: [
+    { n: 'Gos cap per avall', d: '5 respiracions × 3', h: 'Talons cap a terra, alterna flexionar un genoll i l\'altre per estirar els bessons.' },
+    { n: 'Gambada baixa (anjaneyasana)', d: '5 respiracions per costat', h: 'Genoll de darrere a terra, maluc endavant, braços amunt.' },
+    { n: 'Coloma', d: '1 min per costat', h: 'Obre el maluc i el glutis. Si molesta el genoll, fes la versió estirat d\'esquena (figura 4).' },
+    { n: 'Guerrer III', d: '5 respiracions per costat', h: 'Equilibri a una cama amb el cos en línia: estabilitat de turmell i maluc.' },
+    { n: 'Pinça asseguda', d: '1 min', h: 'Esquena llarga, baixa des del maluc, no des de l\'esquena.' },
+    { n: 'Torsió estirat', d: '1 min per costat', h: 'Relaxa la zona lumbar després de córrer.' },
+    { n: 'Cames a la paret', d: '3 min', h: 'Recuperació: cames amunt recolzades a la paret, respiració lenta.' },
+  ],
+};
+ROUTINES.S = {
+  name: 'Estiraments i estabilitat · 15 min',
+  min: 15,
+  focus: 'Estiraments suaus i exercicis d\'estabilitat per prevenir lesions. Es pot fer just després de córrer.',
+  ex: [
+    { n: 'Estirament de quàdriceps dempeus', d: '2 × 30 s per cama', h: 'Genolls junts i maluc endavant.' },
+    { n: 'Estirament de bessons a la paret', d: '2 × 30 s per cama', h: 'Cama de darrere recta i després flexionada per al soli.' },
+    { n: 'Pont de glutis a una cama', d: '2 × 10 per cama', h: 'Maluc alineat, sense que caigui cap costat.' },
+    { n: 'Clamshell amb banda', d: '2 × 15 per costat', h: 'Estirat de costat, obre el genoll sense girar el maluc.' },
+    { n: 'Equilibri a una cama amb abast', d: '2 × 8 per cama', h: 'Toca el terra endavant i als costats sense perdre l\'equilibri.' },
+  ],
+};
+
 export const STEP_LABEL = { warm: 'Escalfament', cool: 'Tornada a la calma', run: 'Carrera', rep: 'Repeticions', strides: 'Rectes' };
 
 export const ZONE_INFO = {
@@ -74,4 +101,9 @@ export const TYPE_INFO = {
   race: { name: 'Cursa', cls: 'race' },
   strength: { name: 'Força', cls: 'str' },
   mobility: { name: 'Mobilitat', cls: 'str' },
+  yoga: { name: 'Ioga i estiraments', cls: 'str' },
+  runwalk: { name: 'Caminar i córrer', cls: 'easy' },
+  cross: { name: 'Entrenament creuat', cls: 'str' },
 };
+
+export const CROSS_KINDS = { bike: 'Bicicleta', swim: 'Natació', elliptical: 'El·líptica', walk: 'Caminar', hike: 'Muntanya', gym: 'Gimnàs', other: 'Altres' };

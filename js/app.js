@@ -1,11 +1,11 @@
 import { vdotFrom, predict, zones, DIST, LEVEL_5K, fmtPace, fmtTime, parseTime } from './vdot.js';
 import { buildPlan, planFrame, PHASES, iso, fromIso, addDays, dow, monday, estSeconds, stepsKm, ADJUST_INFO } from './plan.js';
-import { ROUTINES, ZONE_INFO, TYPE_INFO } from './library.js';
+import { ROUTINES, ZONE_INFO, TYPE_INFO, CROSS_KINDS } from './library.js';
 import { connCfg, authUrl, handleRedirect, syncPolar, fetchBestEffort, parseActivityFile, matchActivities, logFor } from './sync.js';
 import { Recorder, buildSegments, toGpx } from './gps.js';
 import { HeartRate, hrSupported } from './hr.js';
 import { TEMPLATES } from './templates.js';
-import { briefing, fetchForecast, weatherAt, heatZones, raceSplits, LIBRARY, libraryItem } from './coach.js';
+import { briefing, fetchForecast, weatherAt, heatZones, raceSplits, LIBRARY, libraryItem, RPE_TXT, hrRange, HR_ZONES, paceInsight, sessionAnalysis, THUMB_REASONS, records, achievements } from './coach.js';
 
 // ---------- Estat ----------
 const KEY = 'pacely:v1';
@@ -146,7 +146,7 @@ function renderOnboarding() {
   } else if (ob.step === 1) {
     const g = TEMPLATES.girona27;
     body = `${prog}<h1>Per a quina distància t'entrenes?</h1><div class="choices">
-      <button class="choice" data-a="ob-template" data-v="girona27" aria-pressed="${ob.template === 'girona27'}"><span class="label">Pla preparat</span><b>${g.name}</b><span class="small muted">${g.desc}</span></button>
+      ${['girona27', 'start5k', 'return'].map(id => { const t = TEMPLATES[id]; return `<button class="choice" data-a="ob-template" data-v="${id}" aria-pressed="${ob.template === id}"><span class="label">Pla preparat</span><b>${t.name}</b><span class="small muted">${t.desc}</span></button>`; }).join('')}
       ${Object.entries(DIST).map(([k, d]) => `<button class="choice" data-a="ob-set" data-k="distance" data-v="${k}" aria-pressed="${!ob.template && ob.distance === k}"><b>${d.name}</b><span class="small muted">${{ '5k': 'Velocitat i primeres curses', '10k': 'Equilibri entre ritme i fons', '21k': 'La més popular: fons amb ritme', '42k': 'Paciència i quilòmetres', '50k': 'Fons llarg i alimentació' }[k]}</span></button>`).join('')}
       </div>${nav()}`;
   } else if (ob.step === 2) {
@@ -191,24 +191,29 @@ function renderOnboarding() {
       <label class="field"><span>Temps objectiu (opcional)</span><input class="time" type="text" id="goal" inputmode="numeric" value="${esc(ob.goal)}" placeholder="Ex.: 1:59:00"></label>
       ${feas}${nav('Continua', !fit)}`;
   } else if (ob.step === 4) {
-    const longOk = ob.days.includes(ob.longDay);
+    const rel = TEMPLATES[ob.template]?.relative;
+    const minDays = rel ? 3 : 2;
+    const longOk = rel || ob.days.includes(ob.longDay);
     body = `${prog}<h1>Quins dies pots córrer?</h1>
       <div class="field"><span>Dies de carrera (${ob.days.length})</span><div class="chips">
         ${DAYS.map((d, i) => `<button class="chip" data-a="ob-day" data-v="${i}" aria-pressed="${ob.days.includes(i)}" aria-label="${DAYS_LONG[i]}">${d}</button>`).join('')}
-      </div><span class="small muted">Recomanat: 3–5 dies, amb un dia de descans entre sessions dures.</span></div>
-      <label class="field"><span>Dia de la tirada llarga</span><select id="longDay">${ob.days.map(i => `<option value="${i}" ${ob.longDay === i ? 'selected' : ''}>${DAYS_LONG[i]}</option>`).join('')}</select></label>
+      </div><span class="small muted">${rel ? 'Tria 3 dies, millor no seguits: el cos s\'adapta els dies de descans.' : 'Recomanat: 3–5 dies, amb un dia de descans entre sessions dures.'}</span></div>
+      ${rel ? '' : `<label class="field"><span>Dia de la tirada llarga</span><select id="longDay">${ob.days.map(i => `<option value="${i}" ${ob.longDay === i ? 'selected' : ''}>${DAYS_LONG[i]}</option>`).join('')}</select></label>`}
       <div class="field"><span>Sessions de força per setmana</span><div class="chips">
         ${[0, 1, 2, 3].map(n => `<button class="chip" data-a="ob-set" data-k="strength" data-v="${n}" aria-pressed="${ob.strength === n}">${n}</button>`).join('')}
       </div></div>
+      <div class="field"><span>Ioga i estiraments per setmana</span><div class="chips">
+        ${[0, 1, 2].map(n => `<button class="chip" data-a="ob-set" data-k="yoga" data-v="${n}" aria-pressed="${(ob.yoga || 0) === n}">${n}</button>`).join('')}
+      </div></div>
       <label class="toggle"><input type="checkbox" id="mobility" ${ob.mobility ? 'checked' : ''}> Afegir una sessió de mobilitat setmanal</label>
-      ${ob.days.length < 2 ? '<div class="note warn">Tria com a mínim 2 dies.</div>' : ''}
-      ${nav('Continua', ob.days.length < 2 || !longOk)}`;
+      ${ob.days.length < minDays ? `<div class="note warn">Tria com a mínim ${minDays} dies.</div>` : ''}
+      ${nav('Continua', ob.days.length < minDays || !longOk)}`;
   } else {
     const prof = obProfile();
     const tmp = buildPlan({ profile: prof, logs: {}, moves: {} }, TODAY);
     const ph = Object.keys(PHASES).map(k => [k, tmp.frame.phases.filter(x => x === k).length]).filter(([, n]) => n);
     body = `${prog}<h1>El teu pla</h1>
-      <div class="card hero"><span class="label">${prof.template ? 'Pla preparat · ' : ''}${esc(prof.raceName || DIST[prof.distance].long)}</span>
+      <div class="card hero"><span class="label">${prof.template ? `Pla preparat · ${esc(TEMPLATES[prof.template].name)}` : esc(prof.raceName || DIST[prof.distance].long)}</span>
         <h2>${tmp.frame.n} setmanes · ${DIST[prof.distance].name}</h2>
         <p>${fmtDate(iso(tmp.frame.race))}</p></div>
       <div class="kv"><div><span class="label">Dies</span><b>${prof.days.length}</b></div><div><span class="label">Pic setmanal</span><b>${Math.max(...tmp.weeks.map(w => w.vol))} km</b></div><div><span class="label">Predicció</span><b>${fmtTime(predict(tmp.vdotNow, DIST[prof.distance].m))}</b></div></div>
@@ -221,8 +226,17 @@ function renderOnboarding() {
 function obProfile() {
   const fit = obFitness();
   const t = TEMPLATES[ob.template];
-  if (t) {
+  if (t?.relative) {
+    const days = [...ob.days].sort((a, b) => a - b);
     return {
+      template: t.id, distance: '5k', raceDate: null, raceName: '', weeks: t.weeks, startDate: TODAY,
+      days, longDay: days[days.length - 1], strength: ob.strength, mobility: ob.mobility, yoga: ob.yoga || 0,
+      level: ob.level, base: { distM: fit.distM, sec: fit.sec }, goalSec: null,
+      results: state.profile?.results || [], createdAt: state.profile?.createdAt || new Date().toISOString(),
+    };
+  }
+  if (t) {
+    return { yoga: ob.yoga || 0,
       template: t.id, distance: t.distance, raceDate: t.raceDate, raceName: t.raceName, weeks: t.weeks, startDate: t.startDate,
       days: t.days, longDay: t.longDay, strength: t.strength, mobility: t.mobility,
       level: ob.level, base: { distM: fit.distM, sec: fit.sec }, goalSec: parseTime(ob.goal) || null,
@@ -233,7 +247,7 @@ function obProfile() {
     distance: ob.distance, raceDate: ob.hasRace ? ob.raceDate : null, raceName: ob.hasRace ? ob.raceName.trim() : '',
     weeks: ob.weeks, startDate: state.profile?.startDate && ob.keepStart ? state.profile.startDate : TODAY,
     days: [...ob.days].sort((a, b) => a - b), longDay: ob.longDay, strength: ob.strength, mobility: ob.mobility,
-    level: ob.level, base: { distM: fit.distM, sec: fit.sec }, goalSec: parseTime(ob.goal) || null,
+    level: ob.level, base: { distM: fit.distM, sec: fit.sec }, goalSec: parseTime(ob.goal) || null, yoga: ob.yoga || 0,
     results: state.profile?.results || [], createdAt: state.profile?.createdAt || new Date().toISOString(),
   };
 }
@@ -251,12 +265,36 @@ function readObInputs() {
 }
 
 // ---------- Components ----------
+// Objectiu d'una zona segons la preferència: ritme, km/h (cinta), pulsacions o esforç
+const targetType = () => state.settings?.target || 'pace';
+const maxHr = () => state.settings?.maxHr || null;
+function targetTxt(k, z) {
+  const t = targetType();
+  if (t === 'rpe') return RPE_TXT[k] || '';
+  if (t === 'hr' && maxHr()) { const r = hrRange(k, maxHr(), state.profile?.distance); if (r) return `${r[0]}–${r[1]} ppm`; }
+  if (!z[k]) return '';
+  if (state.settings?.treadmill) return `${(3600 / z[k][1]).toFixed(1).replace('.', ',')}–${(3600 / z[k][0]).toFixed(1).replace('.', ',')} km/h`;
+  return zr(z[k]);
+}
+function targetSpeech(sg) {
+  const t = targetType();
+  if (!sg.zone) return null;
+  if (t === 'rpe') return RPE_TXT[sg.zone] ? RPE_TXT[sg.zone].replace('/10', ' sobre 10').replace('–', ' a ') : null;
+  if (t === 'hr' && maxHr()) { const r = hrRange(sg.zone, maxHr(), state.profile?.distance); return r ? `Pulsacions entre ${r[0]} i ${r[1]}` : null; }
+  return null;
+}
+
 function stepRows(s, z) {
   const zc = k => `var(--z-${k})`;
-  const kmh = r => `${(3600 / r[1]).toFixed(1).replace('.', ',')}–${(3600 / r[0]).toFixed(1).replace('.', ',')} km/h`;
-  const pace = k => (k === 'TEST' ? 'a fons' : z[k] ? (state.settings?.treadmill ? kmh(z[k]) : zr(z[k])) : '');
+  const pace = k => (k === 'TEST' ? 'a fons' : targetTxt(k, z));
   return s.steps.map(st => {
     let txt, zone = st.z || 'E';
+    if (st.k === 'walk') return `<div class="step"><i class="zb" style="background:var(--line)"></i><span>${esc(st.label || `Caminar ${Math.round(st.sec / 60)} min`)}</span><span class="pace">caminant</span></div>`;
+    if (st.k === 'rw') {
+      const m = x => (x % 60 ? `${Math.floor(x / 60)}:${String(x % 60).padStart(2, '0')}` : `${x / 60}`);
+      return `<div class="step"><i class="zb" style="background:${zc('E')}"></i><span>${st.n} × (${m(st.run)} min córrer + ${m(st.walk)} min caminar)</span><span class="pace">${pace('E')}</span></div>`;
+    }
+    if (st.k === 'time') return `<div class="step"><i class="zb" style="background:${zc('E')}"></i><span>${esc(st.label || `${Math.round(st.sec / 60)} min suau`)}</span><span class="pace">${pace(st.z || 'E')}</span></div>`;
     if (st.k === 'warm') txt = `Escalfament ${kmTxt(st.km)} km fàcil${st.strides ? ` + ${st.strides} progressius` : ''}`;
     else if (st.k === 'cool') txt = `Tornada a la calma ${kmTxt(st.km)} km`;
     else if (st.k === 'rep') {
@@ -269,6 +307,22 @@ function stepRows(s, z) {
     const p = st.k === 'hill' || st.k === 'fart' ? 'per sensacions' : st.k === 'strides' ? 'ràpid i fluid' : pace(zone);
     return `<div class="step"><i class="zb" style="background:${zc(zone)}"></i><span>${esc(txt)}</span><span class="pace">${p}</span></div>`;
   }).join('');
+}
+
+const planName = () => {
+  const p = state.profile, t = TEMPLATES[p.template];
+  return t?.relative ? t.short : p.raceName || PLAN.dist.long;
+};
+
+function paceCard(full) {
+  if (state.profile?.template === 'start5k' || state.profile?.template === 'return') return '';
+  const pi = paceInsight(state, PLAN);
+  if (!full && !pi.delta) return '';
+  return `<div class="card"><div class="row between"><span class="label">Estat dels ritmes</span><span class="pill ${pi.status === 'ahead' || pi.status === 'onpoint' ? 'acc' : pi.status === 'review' ? 'sun' : ''}">${pi.name}</span></div>
+    <p>${pi.text}</p>
+    ${pi.delta ? `<p class="small muted">Proposta: ritmes ${pi.delta > 0 ? 'més ràpids' : 'més suaus'} (${pi.change}). L'estructura del pla no canvia.</p>
+      <div class="row"><button class="btn grow" data-a="pi-accept" data-v="${pi.delta}">${pi.delta > 0 ? 'Pujar els ritmes' : 'Baixar els ritmes'}</button><button class="btn ghost" data-a="pi-decline">Ara no</button></div>` : ''}
+    ${full ? `<div class="row small muted"><span>Canviar-los tu mateix:</span><button class="btn ghost sm" data-a="pace-manual" data-v="-0.5">Més suaus</button><button class="btn ghost sm" data-a="pace-manual" data-v="0.5">Més ràpids</button></div>` : ''}</div>`;
 }
 
 function sessRow(s, opts = {}) {
@@ -297,7 +351,7 @@ function screenToday() {
     const ss = allSessions().filter(s => s.date === d);
     const dots = ss.map(s => {
       const l = state.logs[s.id];
-      const c = l ? (l.status === 'done' ? 'var(--ok)' : 'var(--muted)') : s.km ? `var(--z-${{ long: 'M', int: 'I', fartlek: 'I', hills: 'I', tempo: 'T', easy: 'E', test: 'TEST', race: 'RP' }[s.type]})` : 'var(--line)';
+      const c = l ? (l.status === 'done' ? 'var(--ok)' : 'var(--muted)') : s.km ? `var(--z-${{ long: 'M', int: 'I', fartlek: 'I', hills: 'I', tempo: 'T', easy: 'E', runwalk: 'E', test: 'TEST', race: 'RP' }[s.type] || 'E'})` : 'var(--line)';
       return `<i style="background:${c}"></i>`;
     }).join('');
     return `<a href="${ss[0] ? '#s/' + ss[0].id : '#pla'}" class="${d === TODAY ? 'today' : ''}"><span class="dn">${DAYS[i]}</span><span class="dd">${fromIso(d).getDate()}</span><span class="dots">${dots}</span></a>`;
@@ -343,6 +397,7 @@ function screenToday() {
     <div class="kv"><div><span class="label">Aquesta setmana</span><b>${kmTxt(doneKm)}<span class="small muted"> / ${w.vol} km</span></b></div>
       <div><span class="label">Predicció</span><b>${fmtTime(pred)}</b></div>
       <div><span class="label">Objectiu</span><b>${goal ? fmtTime(goal) : '–'}</b></div></div>
+    ${paceCard()}
     ${ev.length ? `<div class="card"><span class="label">El pla s'ha adaptat</span><div class="list">${ev.map(e => `<div class="ev ${e.kind}"><i></i><span>${esc(e.text)}</span></div>`).join('')}</div></div>` : ''}
     <div class="card"><div class="row between"><span class="label">Els teus ritmes ara</span><a class="small" href="#ritmes">Què vol dir?</a></div>
       ${['E', 'T', 'I', 'RP'].map(k => `<div class="row between"><span class="row"><i style="width:10px;height:10px;border-radius:3px;background:var(--z-${k})"></i>${ZONE_INFO[k].name}</span><span class="mono">${zr(zones(PLAN.vdotNow, w.racePace)[k])} /km</span></div>`).join('')}</div>`;
@@ -353,7 +408,10 @@ function screenPlan() {
   const mx = Math.max(...W.map(w => w.vol));
   const cur = PLAN.current.idx;
   const cols = `grid-template-columns:repeat(${W.length},1fr)`;
-  return `${header('El pla', `${W.length} setmanes · ${esc(state.profile.raceName || PLAN.dist.long)}`)}
+  const toggle = `<div class="chips"><button class="chip" data-a="plan-view" data-v="weeks" aria-pressed="${ui.planView !== 'month'}">Setmanes</button><button class="chip" data-a="plan-view" data-v="month" aria-pressed="${ui.planView === 'month'}">Calendari</button></div>`;
+  if (ui.planView === 'month') return `${header('El pla', `${W.length} setmanes · ${esc(planName())}`)}${toggle}${monthView()}`;
+  return `${header('El pla', `${W.length} setmanes · ${esc(planName())}`)}
+    ${toggle}
     <div class="card"><div class="phases">
       <div class="bars" style="${cols}" aria-hidden="true">${W.map(w => `<i class="${w.idx === cur ? 'cur' : ''}" style="height:${Math.max(6, (w.vol / mx) * 100)}%"></i>`).join('')}</div>
       <div class="strip" style="${cols}">${W.map(w => `<a href="#pla" data-a="open-week" data-v="${w.idx}" aria-label="Setmana ${w.idx + 1}" style="background:var(${PHASES[w.phase].color});opacity:${w.deload ? 0.5 : 1}"></a>`).join('')}</div></div>
@@ -366,6 +424,33 @@ function screenPlan() {
         <span class="small muted" style="text-align:right"><b class="mono" style="color:var(--ink)">${w.vol} km</b><br>${done}/${runs.length}</span></summary>
         <div class="body">${w.sessions.map(s => sessRow(s, { date: true })).join('')}${w.note ? `<p class="small muted">${esc(w.note)}</p>` : ''}</div></details>`;
     }).join('')}</div>`;
+}
+
+function monthView() {
+  const ym = ui.calMonth || TODAY.slice(0, 7);
+  const [y, m] = ym.split('-').map(Number);
+  const first = new Date(y, m - 1, 1);
+  const start = monday(first);
+  const sessions = allSessions();
+  const byDate = {};
+  for (const s of sessions) (byDate[s.date] ||= []).push(s);
+  const moving = ui.moving ? sessions.find(s => s.id === ui.moving) : null;
+  const MONTHS_LONG = ['gener', 'febrer', 'març', 'abril', 'maig', 'juny', 'juliol', 'agost', 'setembre', 'octubre', 'novembre', 'desembre'];
+  const cells = [];
+  for (let i = 0; i < 42; i++) {
+    const d = addDays(start, i), di = iso(d);
+    if (i >= 35 && d.getMonth() !== m - 1) break;
+    const list = byDate[di] || [];
+    const allowed = moving && di >= moving.week.start && di <= moving.week.end && di >= state.profile.startDate;
+    cells.push(`<button class="cal-d ${d.getMonth() !== m - 1 ? 'out' : ''} ${di === TODAY ? 'today' : ''} ${di === ui.calDay ? 'sel' : ''} ${allowed ? 'ok' : ''}" data-a="cal-day" data-v="${di}" aria-label="${fmtDate(di)}">
+      <span class="n">${d.getDate()}</span>${list.slice(0, 3).map(s => { const l = state.logs[s.id]; return `<i class="c-${TYPE_INFO[s.type].cls} ${l ? (l.status === 'done' ? 'done' : 'skip') : ''}"></i>`; }).join('')}</button>`);
+  }
+  const sel = ui.calDay ? byDate[ui.calDay] || [] : [];
+  return `<div class="card"><div class="row between"><button class="btn ghost sm" data-a="cal-month" data-v="-1" aria-label="Mes anterior">‹</button><h3>${MONTHS_LONG[m - 1]} ${y}</h3><button class="btn ghost sm" data-a="cal-month" data-v="1" aria-label="Mes següent">›</button></div>
+    <div class="cal">${DAYS.map(d => `<span class="cal-h">${d}</span>`).join('')}${cells.join('')}</div>
+    <div class="legend"><span><i style="background:var(--z-M)"></i>Llarga</span><span><i style="background:var(--z-I)"></i>Sèries</span><span><i style="background:var(--z-T)"></i>Tempo</span><span><i style="background:var(--z-E)"></i>Suau</span><span><i style="background:var(--muted)"></i>Força / ioga</span></div></div>
+    ${moving ? `<div class="note">Toca un dia marcat de la mateixa setmana per moure <b>${esc(moving.title)}</b>. <button class="btn ghost sm" data-a="cal-move" data-v="${moving.id}">Cancel·lar</button></div>` : ''}
+    ${ui.calDay ? `<div class="stack"><span class="label">${fmtDate(ui.calDay)}</span>${sel.length ? sel.map(s => `<div class="row" style="flex-wrap:nowrap">${sessRow(s)}${!state.logs[s.id] ? `<button class="btn ghost sm" data-a="cal-move" data-v="${s.id}">Moure</button>` : ''}</div>`).join('') : '<p class="muted small">Dia de descans.</p>'}</div>` : '<p class="small muted">Toca un dia per veure\'n les sessions i moure-les.</p>'}`;
 }
 
 function screenSession(id) {
@@ -416,11 +501,28 @@ function screenSession(id) {
       ${s.type === 'test' ? `<br><span class="small">${log.needsTime ? `Escriu el temps del tram de ${s.distM / 1000} km (sense escalfament) per recalcular els ritmes.` : `Temps del test: ${fmtTime(log.sec)}${log.actKey ? ` (millor ${s.distM / 1000} km dins la cursa, sense l'escalfament)` : ''}.`}</span>` : ''}</div>` : ''}
     ${isRun && !log ? `<a class="btn" href="#run/${s.id}">▶ Començar amb GPS</a>` : ''}
     ${log?.actKey && state.activities[log.actKey]?.track ? `<button class="btn ghost" data-a="gpx" data-v="${esc(log.actKey)}">Descarregar el recorregut (GPX)</button>` : ''}
+    ${analysisCard(s, log, w)}
     ${brief}
     ${content}
     ${splits}
     ${!log ? `<label class="field"><span>Moure-la a un altre dia d'aquesta setmana</span><select id="moveTo">${weekDays.map(d => `<option value="${d}" ${d === s.date ? 'selected' : ''}>${fmtDate(d)}</option>`).join('')}</select></label>` : ''}
     ${s.date <= TODAY || log ? form : `<p class="small muted">Podràs registrar-la el ${fmtDate(s.date)}.</p>`}`;
+}
+
+function analysisCard(s, log, w) {
+  if (!log || log.status !== 'done' || !s.km) return '';
+  if (!log.thumb) {
+    return `<div class="card"><span class="label">Com ha anat?</span><p>Valora la sessió i et diré què ha anat bé i què pots millorar.</p>
+      <div class="row"><button class="btn ghost grow" data-a="thumb" data-v="up">👍 Bé</button><button class="btn ghost grow" data-a="thumb" data-v="down">👎 No gaire</button></div></div>`;
+  }
+  const rec = records(state);
+  const pbHere = Object.values(rec.pb).find(p => p.date === log.date && (p.src !== 'GPS' || log.actKey));
+  const a = sessionAnalysis(s, log, w, { maxHr: maxHr(), pb: pbHere ? `${pbHere.name} en ${fmtTime(pbHere.sec)}` : null });
+  return `<div class="card"><div class="row between"><span class="label">Anàlisi de la sessió</span><button class="btn ghost sm" data-a="thumb" data-v="${log.thumb === 'up' ? 'down' : 'up'}">${log.thumb === 'up' ? '👍' : '👎'} canviar</button></div>
+    ${log.thumb === 'down' ? `<span class="small">Què ha passat?</span><div class="chips">${Object.entries(THUMB_REASONS).map(([k, n]) => `<button class="chip" data-a="reason" data-v="${k}" aria-pressed="${(log.reasons || []).includes(k)}">${n}</button>`).join('')}</div>` : ''}
+    ${a.good.length ? `<div class="list">${a.good.map(t => `<div class="ev up"><i></i><span>${esc(t)}</span></div>`).join('')}</div>` : ''}
+    ${a.improve.length ? `<div class="list">${a.improve.map(t => `<div class="ev down"><i></i><span>${esc(t)}</span></div>`).join('')}</div>` : ''}
+    <p class="small muted">Aquesta anàlisi no canvia el pla. Si cal ajustar els ritmes, ho veuràs a "Estat dels ritmes".</p></div>`;
 }
 
 function screenAdjust() {
@@ -429,9 +531,11 @@ function screenAdjust() {
   return `<div class="row"><a href="#avui" class="btn ghost sm">← Avui</a></div>
     <div><h1>No em trobo al 100%</h1><p class="muted">Digues què passa i Pacely canviarà les sessions dels propers dies. Ho pots desfer quan vulguis.</p></div>
     <div class="choices">${Object.entries(ADJUST_INFO).map(([key, i]) => `<button class="choice" data-a="adj-kind" data-v="${key}" aria-pressed="${k === key}"><b>${i.name}</b><span class="small muted">${i.help}</span></button>`).join('')}</div>
-    ${k && k !== 'break' ? `<div class="field"><span>Durant quants dies, a partir d'avui?</span><div class="chips">${[3, 5, 7, 14].map(n => `<button class="chip" data-a="adj-days" data-v="${n}" aria-pressed="${days === n}">${n} dies</button>`).join('')}</div></div>` : ''}
+    ${k === 'holiday' ? `<div class="row"><label class="field grow"><span>Des del</span><input type="date" id="hoFrom" value="${esc(ui.hoFrom || TODAY)}" min="${TODAY}"></label><label class="field grow"><span>Fins al</span><input type="date" id="hoTo" value="${esc(ui.hoTo || iso(addDays(fromIso(TODAY), 6)))}" min="${TODAY}"></label></div>
+      <label class="toggle"><input type="checkbox" id="hoEasy" ${ui.hoEasy ? 'checked' : ''}> Vull fer algun rodatge suau</label>`
+    : k && k !== 'break' ? `<div class="field"><span>Durant quants dies, a partir d'avui?</span><div class="chips">${[3, 5, 7, 14].map(n => `<button class="chip" data-a="adj-days" data-v="${n}" aria-pressed="${days === n}">${n} dies</button>`).join('')}</div></div>` : ''}
     <button class="btn block" data-a="adj-apply" ${k ? '' : 'disabled'}>Ajustar el pla</button>
-    ${active.length ? `<div class="card"><span class="label">Ajustos actius</span>${active.map(a => `<div class="row between"><span>${ADJUST_INFO[a.kind].name} · fins al ${fmtShort(a.to)}</span><button class="btn ghost sm" data-a="adj-undo" data-v="${a.i}">Desfer</button></div>`).join('')}</div>` : ''}`;
+    ${active.length ? `<div class="card"><span class="label">Ajustos actius</span>${active.map(a => `<div class="row between"><span>${ADJUST_INFO[a.kind].name} · ${a.from > TODAY ? `del ${fmtShort(a.from)} ` : ''}fins al ${fmtShort(a.to)}${a.easyOnly ? ' (només suau)' : ''}</span><button class="btn ghost sm" data-a="adj-undo" data-v="${a.i}">Desfer</button></div>`).join('')}</div>` : ''}`;
 }
 
 function screenLibrary() {
@@ -456,8 +560,8 @@ function screenLibItem(id) {
 }
 
 function screenStrength() {
-  return `${header('Força i mobilitat', 'Rutines per córrer més fort i sense lesions')}
-    ${Object.entries(ROUTINES).map(([k, r]) => `<details class="card"><summary class="row between" style="cursor:pointer;list-style:none"><span><h3>${r.name}</h3><span class="small muted">${r.min} min · ${r.ex.length} exercicis</span></span><span class="pill">${k === 'M' ? 'Mobilitat' : 'Força'}</span></summary>
+  return `${header('Força i mobilitat', 'Força, mobilitat, ioga i estiraments')}
+    ${Object.entries(ROUTINES).map(([k, r]) => `<details class="card"><summary class="row between" style="cursor:pointer;list-style:none"><span><h3>${r.name}</h3><span class="small muted">${r.min} min · ${r.ex.length} exercicis</span></span><span class="pill">${{ M: 'Mobilitat', Y: 'Ioga', S: 'Estiraments' }[k] || 'Força'}</span></summary>
       <p class="muted small">${esc(r.focus)}</p>
       ${r.ex.map(e => `<div class="ex"><div class="row between"><b>${esc(e.n)}</b><span class="mono small">${esc(e.d)}</span></div><span class="small muted">${esc(e.h)}</span></div>`).join('')}</details>`).join('')}
     <p class="small muted">Fes servir un pes que et permeti acabar cada sèrie amb 2 repeticions de marge. A les setmanes de descàrrega, una sola sessió.</p>`;
@@ -495,15 +599,67 @@ function screenHistory() {
       ${vh.length > 1 ? `<div class="row between"><span class="muted">A l'inici</span><span class="mono">${vh[0].vdot.toFixed(1)}</span></div>` : ''}
       <table class="table"><tr><th>Distància</th><th>Temps previst</th><th>Ritme</th></tr>${preds.map(([n, t], i) => `<tr><td>${n}</td><td class="mono">${fmtTime(t)}</td><td class="mono">${fmtPace(t / [5, 10, 21.0975, 42.195][i])}/km</td></tr>`).join('')}</table></div>
     <div class="card"><span class="label">Adaptacions del pla</span>${PLAN.events.length ? `<div class="list">${PLAN.events.map(e => `<div class="ev ${e.kind}"><i></i><span>${esc(e.text)} <span class="muted small">${fmtShort(e.date)}</span></span></div>`).join('')}</div>` : '<p class="muted small">Encara cap. Quan registris tests i sessions, el pla s\'ajustarà i ho veuràs aquí.</p>'}</div>
+    ${recordsCard()}
+    ${statsCard(runLogs, extras)}
+    ${crossCard()}
     <div class="stack"><span class="label">Sessions registrades</span>${logs.length ? logs.map(l => `<a class="sess c-${TYPE_INFO[l.type]?.cls || 'easy'} ${l.status === 'skipped' ? 'done' : ''}" href="#s/${l.id}"><i class="bar"></i><span class="grow"><span class="t">${esc(l.title)}</span><br><span class="meta">${fmtDate(l.date)}${l.status === 'skipped' ? ' · saltada' : `${l.km ? ' · ' + kmTxt(l.km) + ' km' : ''}${l.sec ? ' · ' + fmtTime(l.sec) : ''}${l.sec && l.km ? ' · ' + fmtPace(l.sec / l.km) + '/km' : ''}${l.hr ? ' · ' + l.hr + ' ppm' : ''}${l.rpe ? ' · RPE ' + l.rpe : ''}${l.source ? ' · ' + SRC[l.source] : ''}`}</span></span></a>`).join('') : '<p class="muted">Encara no has registrat cap sessió.</p>'}</div>
     ${extras.length ? `<div class="stack"><span class="label">Curses fora del pla</span>${extras.map(x => `<div class="sess c-easy"><i class="bar"></i><span class="grow"><span class="t">${esc(x.name || 'Cursa')}</span><br><span class="meta">${fmtDate(x.date)} · ${kmTxt(x.km)} km · ${fmtTime(x.sec)}${x.km ? ' · ' + fmtPace(x.sec / x.km) + '/km' : ''}${x.hr ? ' · ' + x.hr + ' ppm' : ''} · ${SRC[x.source]}</span></span></div>`).join('')}</div>` : ''}`;
+}
+
+function recordsCard() {
+  const rec = records(state);
+  const ach = achievements(state, PLAN, rec, TODAY);
+  const pbs = Object.values(rec.pb);
+  return `<div class="card"><span class="label">Rècords personals</span>
+      ${pbs.length || rec.longest ? `<table class="table">${pbs.map(p => `<tr><td>${p.name}</td><td class="mono">${fmtTime(p.sec)}</td><td class="small muted">${fmtShort(p.date)} · ${p.src}</td></tr>`).join('')}
+        ${rec.longest ? `<tr><td>Sortida més llarga</td><td class="mono">${kmTxt(rec.longest.km)} km</td><td class="small muted">${fmtShort(rec.longest.date)}</td></tr>` : ''}</table>`
+      : '<p class="small muted">Quan facis un test, una cursa o gravis amb GPS, aquí sortiran les teves millors marques.</p>'}
+      ${ach.streak ? `<p class="small">Ratxa actual: <b>${ach.streak} ${ach.streak === 1 ? 'setmana completa' : 'setmanes completes'}</b> seguides.</p>` : ''}</div>
+    <div class="card"><div class="row between"><span class="label">Assoliments</span><span class="small muted">${ach.list.filter(a => a.done).length} de ${ach.list.length}</span></div>
+      <div class="badges">${ach.list.map(a => `<div class="badge ${a.done ? 'on' : 'off'}"><b>${a.done ? '🏅 ' : ''}${esc(a.name)}</b><span class="small muted">${esc(a.desc)}</span></div>`).join('')}</div></div>`;
+}
+
+function statsCard(runLogs, extras) {
+  const runs = [...runLogs.map(l => ({ date: l.date, km: +l.km || 0, sec: l.actSec || l.sec || 0 })), ...extras.map(x => ({ date: x.date, km: x.km, sec: x.sec || 0 }))];
+  const cross = state.cross || [];
+  const year = +(ui.statYear || TODAY.slice(0, 4));
+  const months = Array.from({ length: 12 }, (_, i) => runs.filter(r => +r.date.slice(0, 4) === year && +r.date.slice(5, 7) === i + 1).reduce((a, r) => a + r.km, 0));
+  const mx = Math.max(10, ...months);
+  const years = [...new Set([...runs, ...cross].map(r => +r.date.slice(0, 4)))].sort((a, b) => b - a);
+  const yTot = y => { const rs = runs.filter(r => +r.date.slice(0, 4) === y); return { km: rs.reduce((a, r) => a + r.km, 0), sec: rs.reduce((a, r) => a + r.sec, 0), n: rs.length, cross: cross.filter(c => +c.date.slice(0, 4) === y).reduce((a, c) => a + c.min, 0) }; };
+  const all = { km: runs.reduce((a, r) => a + r.km, 0), n: runs.length };
+  const firstDate = runs.map(r => r.date).sort()[0];
+  const weeksSpan = firstDate ? Math.max(1, (fromIso(TODAY) - fromIso(firstDate)) / 6048e5) : 1;
+  const M = ['G', 'F', 'M', 'A', 'M', 'J', 'J', 'A', 'S', 'O', 'N', 'D'];
+  const prevKm = yTot(year - 1).km;
+  return `<div class="card"><div class="row between"><span class="label">Km per mes · ${year}</span><span class="row"><button class="btn ghost sm" data-a="stat-year" data-v="-1" aria-label="Any anterior">‹</button><button class="btn ghost sm" data-a="stat-year" data-v="1" aria-label="Any següent">›</button></span></div>
+    <svg class="chart" viewBox="0 0 620 150" role="img" aria-label="Quilòmetres per mes de ${year}">
+      ${[0, 0.5, 1].map(f => `<line x1="24" x2="620" y1="${125 - f * 105}" y2="${125 - f * 105}" stroke="var(--line)"/><text x="0" y="${129 - f * 105}">${Math.round(mx * f)}</text>`).join('')}
+      ${months.map((v, i) => `<rect x="${30 + i * 49}" y="${125 - (v / mx) * 105}" width="40" height="${(v / mx) * 105}" rx="3" fill="${year === +TODAY.slice(0, 4) && i === +TODAY.slice(5, 7) - 1 ? 'var(--sun)' : 'var(--accent)'}"/>
+        ${v ? `<text x="${50 + i * 49}" y="${120 - (v / mx) * 105}" text-anchor="middle">${Math.round(v)}</text>` : ''}<text x="${50 + i * 49}" y="143" text-anchor="middle">${M[i]}</text>`).join('')}
+    </svg>
+    <table class="table"><tr><th>Any</th><th>Km</th><th>Sortides</th><th>Temps</th></tr>${(years.length ? years : [year]).map(y => { const t = yTot(y); return `<tr><td>${y}</td><td class="mono">${kmTxt(t.km)}</td><td class="mono">${t.n}</td><td class="mono">${dur(t.sec)}${t.cross ? ` + ${dur(t.cross * 60)} creuat` : ''}</td></tr>`; }).join('')}</table>
+    <p class="small muted">Total: ${kmTxt(all.km)} km en ${all.n} sortides · mitjana de ${kmTxt(all.km / weeksSpan)} km per setmana${prevKm ? ` · ${year - 1}: ${kmTxt(prevKm)} km` : ''}.</p></div>`;
+}
+
+function crossCard() {
+  const list = [...(state.cross || [])].sort((a, b) => b.date.localeCompare(a.date));
+  return `<form class="card" id="crossForm"><span class="label">Entrenament creuat</span>
+    <p class="small muted">Bici, natació, el·líptica... Compta per a l'historial i les estadístiques.</p>
+    <div class="row"><label class="field grow"><span>Activitat</span><select id="crKind">${Object.entries(CROSS_KINDS).map(([k, n]) => `<option value="${k}">${n}</option>`).join('')}</select></label>
+      <label class="field grow"><span>Data</span><input type="date" id="crDate" value="${TODAY}" max="${TODAY}"></label></div>
+    <div class="row"><label class="field grow"><span>Minuts</span><input type="number" id="crMin" min="1" inputmode="numeric" placeholder="45"></label>
+      <label class="field grow"><span>Km (opcional)</span><input type="number" id="crKm" min="0" step="0.1" inputmode="decimal"></label>
+      <label class="field grow"><span>Esforç 1–10</span><input type="number" id="crRpe" min="1" max="10" inputmode="numeric" placeholder="5"></label></div>
+    <button class="btn ghost" type="submit">Afegir</button>
+    ${list.length ? `<div class="list">${list.slice(0, 15).map(c => `<div class="row between"><span>${fmtShort(c.date)} · ${CROSS_KINDS[c.kind]} · ${dur(c.min * 60)}${c.km ? ` · ${kmTxt(c.km)} km` : ''}${c.rpe ? ` · RPE ${c.rpe}` : ''}</span><button type="button" class="btn ghost sm" data-a="cross-del" data-v="${c.id}">Treu</button></div>`).join('')}</div>` : ''}</form>`;
 }
 
 function screenProfile() {
   const p = state.profile;
   return `${header('Perfil')}
     <div class="card"><span class="label">El teu pla</span>
-      <div class="row between"><span>Objectiu</span><b>${esc(p.raceName || DIST[p.distance].long)}</b></div>
+      <div class="row between"><span>Objectiu</span><b>${esc(planName())}</b></div>
       ${p.template ? `<div class="row between"><span>Tipus</span><span class="pill acc">Pla preparat</span></div>` : ''}
       <div class="row between"><span>Data</span><span>${fmtDate(iso(PLAN.frame.race))}</span></div>
       <div class="row between"><span>Temps objectiu</span><span class="mono">${p.goalSec ? fmtTime(p.goalSec) : 'sense'}</span></div>
@@ -511,6 +667,19 @@ function screenProfile() {
       <div class="row between"><span>Força / mobilitat</span><span>${p.strength}× · ${p.mobility ? 'sí' : 'no'}</span></div>
       <button class="btn ghost" data-a="edit-plan">Canviar el pla</button>
       <p class="small muted">Si canvies els dies o l'objectiu, el pla es torna a calcular. Els registres que ja tens es conserven.</p></div>
+    <div class="card"><span class="label">Dificultat del pla</span>
+      <div class="chips">${[[-1, 'Més suau'], [0, 'Normal'], [1, 'Més exigent']].map(([k, n]) => `<button class="chip" data-a="difficulty" data-v="${k}" aria-pressed="${(p.difficulty || 0) === k}">${n}</button>`).join('')}</div>
+      <p class="small muted">Més suau: un 15 % menys de km i ritmes una mica més lents. Més exigent: un 12 % més de km i ritmes una mica més ràpids. L'estructura del pla no canvia.</p></div>
+    <form class="card" id="hrForm"><span class="label">Objectius de les sessions</span>
+      <div class="chips">${[['pace', 'Ritme'], ['hr', 'Pulsacions'], ['rpe', 'Esforç (1–10)']].map(([k, n]) => `<button type="button" class="chip" data-a="target" data-v="${k}" aria-pressed="${targetType() === k}">${n}</button>`).join('')}</div>
+      <p class="small muted">${targetType() === 'hr' ? 'Les sessions et diran entre quines pulsacions has d\'anar.' : targetType() === 'rpe' ? 'Les sessions et diran l\'esforç que has de sentir, de l\'1 al 10. Útil per a muntanya o dies de calor.' : 'Les sessions et diuen el ritme en min/km.'}</p>
+      <div class="row"><label class="field grow"><span>Freqüència cardíaca màxima</span><input type="number" id="maxHr" min="120" max="230" inputmode="numeric" value="${esc(maxHr() || '')}" placeholder="p. ex. 190"></label><button class="btn ghost" type="submit" style="align-self:end">Desa</button></div>
+      ${maxHr() ? `<table class="table">${HR_ZONES.map(([n, a, b]) => `<tr><td>${n}</td><td class="mono">${Math.round(a * maxHr())}–${Math.round(b * maxHr())} ppm</td></tr>`).join('')}</table>`
+        : '<p class="small muted">Si no la saps, la del Polar Flow (Perfil → Configuració física) és un bon punt de partida.</p>'}
+      ${targetType() === 'hr' && !maxHr() ? '<div class="note warn">Escriu la freqüència màxima per veure els objectius en pulsacions.</div>' : ''}</form>
+    <div class="card"><span class="label">Ioga i estiraments</span>
+      <div class="chips">${[0, 1, 2].map(n => `<button class="chip" data-a="yoga" data-v="${n}" aria-pressed="${(p.yoga || 0) === n}">${n === 0 ? 'Cap' : `${n} per setmana`}</button>`).join('')}</div>
+      <p class="small muted">Sessions de 15–20 minuts en dies sense córrer: ioga per a corredors i estiraments amb estabilitat.</p></div>
     <form class="card" id="resultForm"><span class="label">Afegir una cursa o marca recent</span>
       <p class="small muted">Si has fet una cursa fora del pla, afegeix-la i els ritmes s'actualitzaran.</p>
       <div class="row"><label class="field grow"><span>Distància</span><select id="rsDist">${['5k', '10k', '21k', '42k'].map(k => `<option value="${k}">${DIST[k].name}</option>`).join('')}</select></label>
@@ -556,7 +725,8 @@ function watchCard() {
 function screenZones() {
   const z = zones(PLAN.vdotNow, PLAN.current.racePace);
   return `<div class="row"><a href="#avui" class="btn ghost sm">← Avui</a></div><h1>Els ritmes</h1>
-    <p class="muted">Calculats amb el teu índex de forma (VDOT ${PLAN.vdotNow.toFixed(1)}). Canvien quan registres un test o una cursa.</p>
+    <p class="muted">Calculats amb el teu índex de forma (VDOT ${PLAN.vdotNow.toFixed(1)}). Canvien quan registres un test o una cursa, o quan acceptes una proposta.</p>
+    ${paceCard(true)}
     ${['E', 'M', 'T', 'I', 'R', 'RP'].map(k => `<div class="card"><div class="row between"><span class="row"><i style="width:12px;height:12px;border-radius:3px;background:var(--z-${k})"></i><h3>${ZONE_INFO[k].name}</h3></span><span class="mono">${zr(z[k])} /km</span></div><p class="small muted">${ZONE_INFO[k].feel}</p></div>`).join('')}`;
 }
 
@@ -612,6 +782,7 @@ function ensureRun(arg) {
   const opts = {
     sessionId: s && !lib ? sid : null, segments: buildSegments(s?.km ? s : null, zz), title: s ? s.title : 'Cursa lliure',
     fuelEvery: long ? 35 * 60 : 0,
+    targetSpeech, noPaceAlerts: targetType() !== 'pace' || s?.type === 'runwalk',
     onUpdate: updateRun, onEvent: (kind, msg) => { ui.runMsg = msg; updateRun(); },
   };
   RUN = pend ? Recorder.restore(opts) : new Recorder(opts);
@@ -658,14 +829,14 @@ function updateRun() {
   $('rGps').className = `pill ${fresh && r.acc <= 30 ? 'acc' : 'sun'}`;
   $('rMute').textContent = r.s.muted ? 'Veu: no' : 'Veu: sí';
   $('rSeg').textContent = r.s.paused && r.s.startedAt ? `En pausa · ${sg.label}` : sg.label;
-  $('rTarget').textContent = sg.pace ? `${fmtPace(sg.pace[0])}–${fmtPace(sg.pace[1])} /km` : sg.work ? 'Fort' : '';
+  $('rTarget').textContent = sg.zone && targetType() !== 'pace' ? targetTxt(sg.zone, {}) : sg.pace ? `${fmtPace(sg.pace[0])}–${fmtPace(sg.pace[1])} /km` : sg.work ? 'Fort' : '';
   $('rLeft').textContent = sg.kind === 'dist' ? `queden ${Math.max(0, Math.round(prog.left))} m` : sg.kind === 'time' ? `queden ${fmtTime(Math.max(0, prog.left))}` : '';
   $('rBar').parentElement.hidden = sg.kind === 'open';
   $('rBar').style.width = sg.kind === 'open' ? '0%' : `${Math.min(100, (prog.done / sg.target) * 100)}%`;
   const nx = r.segments[r.s.seg + 1];
   $('rNext').textContent = nx ? `Després: ${nx.label}` : '';
   $('rPace').textContent = isFinite(cur) ? fmtPace(cur) : '–';
-  $('rPace').style.color = isFinite(cur) && sg.pace ? (cur < sg.pace[0] - 8 || cur > sg.pace[1] + 8 ? 'var(--warn)' : 'var(--ok)') : '';
+  $('rPace').style.color = isFinite(cur) && sg.pace && targetType() === 'pace' ?(cur < sg.pace[0] - 8 || cur > sg.pace[1] + 8 ? 'var(--warn)' : 'var(--ok)') : '';
   $('rDist').textContent = (r.s.dist / 1000).toFixed(2).replace('.', ',') + ' km';
   $('rTime').textContent = fmtTime(r.elapsed);
   $('rAvg').textContent = isFinite(r.avgPace()) ? fmtPace(r.avgPace()) : '–';
@@ -715,6 +886,18 @@ function applyTheme() {
   else document.documentElement.removeAttribute('data-theme');
 }
 
+function checkBadges() {
+  try {
+    const list = achievements(state, PLAN, records(state), TODAY).list;
+    const done = list.filter(a => a.done).map(a => a.id);
+    const first = !Array.isArray(state.badges);
+    const fresh = done.filter(id => !(state.badges || []).includes(id));
+    if (!fresh.length) return;
+    state.badges = done; save();
+    if (!first) setTimeout(() => toast(`🏅 Nou assoliment: ${list.find(a => a.id === fresh[0]).name}`), 400);
+  } catch { /* els assoliments no han de trencar mai l'app */ }
+}
+
 function render() {
   applyTheme();
   if (!state.profile || ob) {
@@ -723,6 +906,7 @@ function render() {
   }
   computePlan();
   refreshWx(false);
+  checkBadges();
   const [route, arg] = (location.hash.slice(1) || 'avui').split('/');
   const map = { avui: screenToday, pla: screenPlan, forca: screenStrength, historial: screenHistory, perfil: screenProfile, ritmes: screenZones, ajust: screenAdjust, entrenos: screenLibrary };
   const tab = { s: 'pla', e: 'pla', entrenos: 'pla', ritmes: 'avui', ajust: 'avui' }[route] || route;
@@ -743,7 +927,7 @@ document.addEventListener('click', e => {
   if (a.startsWith('ob-') || (a === 'ob-set')) readObInputs();
   switch (a) {
     case 'ob-next':
-      if (ob.step === 4 && !ob.days.includes(ob.longDay)) return;
+      if (ob.step === 4 && !TEMPLATES[ob.template]?.relative && !ob.days.includes(ob.longDay)) return;
       if (ob.step === 5) {
         state.profile = obProfile();
         ob = null; save(); location.hash = '#avui'; render();
@@ -751,21 +935,28 @@ document.addEventListener('click', e => {
         return;
       }
       // El pla preparat ja té data i dies: de la distància passa a la forma, i de la forma al resum
-      ob.step = ob.template && ob.step === 1 ? 3 : ob.template && ob.step === 3 ? 5 : ob.step + 1;
+      {
+        const rel = TEMPLATES[ob.template]?.relative;
+        if (ob.step === 4 && rel && ob.days.length < 3) return;
+        ob.step = !ob.template ? ob.step + 1 : ob.step === 1 ? (rel ? 4 : 3) : ob.step === 3 ? 5 : ob.step === 4 ? 5 : ob.step + 1;
+      }
       renderOnboarding(); window.scrollTo(0, 0); break;
-    case 'ob-back':
-      ob.step = ob.template && ob.step === 5 ? 3 : ob.template && ob.step === 3 ? 1 : ob.step - 1;
+    case 'ob-back': {
+      const rel = TEMPLATES[ob.template]?.relative;
+      ob.step = !ob.template ? ob.step - 1 : ob.step === 5 ? (rel ? 4 : 3) : ob.step <= 4 ? 1 : ob.step - 1;
       renderOnboarding(); break;
+    }
     case 'ob-template': {
       const t = TEMPLATES[v];
-      Object.assign(ob, { template: t.id, distance: t.distance, hasRace: true, raceDate: t.raceDate, raceName: t.raceName, goal: ob.goal || '1:59:00' });
+      if (t.relative) Object.assign(ob, { template: t.id, distance: '5k', hasRace: false, raceDate: '', raceName: '', goal: '', ...(t.id === 'start5k' ? { level: 'beg', hasResult: false } : {}) });
+      else Object.assign(ob, { template: t.id, distance: t.distance, hasRace: true, raceDate: t.raceDate, raceName: t.raceName, goal: ob.goal || '1:59:00' });
       renderOnboarding(); break;
     }
     case 'ob-set': {
       if (k === 'distance') ob.template = null;
       let val = v;
       if (k === 'hasRace' || k === 'hasResult') val = v === '1';
-      if (k === 'strength') val = +v;
+      if (k === 'strength' || k === 'yoga') val = +v;
       ob[k] = val; renderOnboarding(); break;
     }
     case 'ob-day': {
@@ -800,14 +991,51 @@ document.addEventListener('click', e => {
     }
     case 'sync': doSync(true); break;
     case 'heat-on': enableHeat(); break;
+    case 'pi-accept': case 'pace-manual':
+      state.profile.paceAdj = [...(state.profile.paceAdj || []), { date: TODAY, delta: +v }];
+      save(); render(); toast(+v > 0 ? 'Ritmes pujats' : 'Ritmes baixats'); break;
+    case 'pi-decline': state.paceDecline = TODAY; save(); render(); toast('D\'acord, ho tornarem a mirar amb les properes sessions'); break;
+    case 'thumb': {
+      const l = state.logs[location.hash.split('/')[1]];
+      if (l) { l.thumb = v; if (v === 'up') l.reasons = []; save(); render(); }
+      break;
+    }
+    case 'reason': {
+      const l = state.logs[location.hash.split('/')[1]];
+      if (l) { l.reasons = (l.reasons || []).includes(v) ? l.reasons.filter(x => x !== v) : [...(l.reasons || []), v]; save(); render(); }
+      break;
+    }
+    case 'difficulty': state.profile.difficulty = +v; save(); render(); toast('Dificultat canviada: el pla s\'ha recalculat'); break;
+    case 'target': state.settings = { ...(state.settings || {}), target: v }; save(); render(); break;
+    case 'yoga': state.profile.yoga = +v; save(); render(); break;
+    case 'plan-view': ui.planView = v; render(); break;
+    case 'stat-year': ui.statYear = +(ui.statYear || TODAY.slice(0, 4)) + +v; render(); break;
+    case 'cal-month': { const [y, m] = (ui.calMonth || TODAY.slice(0, 7)).split('-').map(Number); const d = new Date(y, m - 1 + +v, 1); ui.calMonth = iso(d).slice(0, 7); render(); break; }
+    case 'cal-day':
+      if (ui.moving) {
+        const s = findSession(ui.moving);
+        const ws = s.week.start, we = s.week.end;
+        if (v >= ws && v <= we) { const orig = s.movedFrom || s.date; if (v === orig) delete state.moves[s.id]; else state.moves[s.id] = v; save(); toast(`Sessió moguda al ${fmtDate(v)}`); }
+        else toast('Només la pots moure dins de la mateixa setmana.');
+        ui.moving = null;
+      } else ui.calDay = v;
+      render(); break;
+    case 'cal-move': ui.moving = ui.moving === v ? null : v; render(); break;
+    case 'cross-del': state.cross = (state.cross || []).filter(c => c.id !== v); save(); render(); toast('Entrenament esborrat'); break;
     case 'treadmill': state.settings = { ...(state.settings || {}), treadmill: !state.settings?.treadmill }; save(); render(); break;
     case 'adj-kind': ui.adjKind = v; render(); break;
     case 'adj-days': ui.adjDays = +v; render(); break;
     case 'adj-apply': {
       const kind = ui.adjKind;
       if (!kind) { toast('Tria com et trobes.'); break; }
-      const days = kind === 'break' ? 7 : ui.adjDays || 3;
-      (state.adjust ||= []).push({ kind, from: TODAY, to: iso(addDays(fromIso(TODAY), days - 1)), created: new Date().toISOString() });
+      if (kind === 'holiday') {
+        const from = document.getElementById('hoFrom').value, to = document.getElementById('hoTo').value;
+        if (!from || !to || to < from) { toast('Revisa les dates: la de tornada ha de ser posterior.'); break; }
+        (state.adjust ||= []).push({ kind, from, to, easyOnly: document.getElementById('hoEasy').checked, created: new Date().toISOString() });
+      } else {
+        const days = kind === 'break' ? 7 : ui.adjDays || 3;
+        (state.adjust ||= []).push({ kind, from: TODAY, to: iso(addDays(fromIso(TODAY), days - 1)), created: new Date().toISOString() });
+      }
       save(); ui.adjKind = null; location.hash = '#avui'; toast('Pla ajustat. Mira els canvis a la setmana.'); break;
     }
     case 'adj-undo': state.adjust.splice(+v, 1); save(); render(); toast('Ajust desfet'); break;
@@ -833,7 +1061,7 @@ document.addEventListener('click', e => {
       const rk = Object.keys(DIST).find(x => Math.abs(DIST[x].m - r.distM) < 1) || '5k';
       ob = { ...defaults(), step: 1, distance: p.distance, hasRace: !!p.raceDate, raceDate: p.raceDate || '', raceName: p.raceName || '', weeks: p.weeks || 12,
         level: p.level, hasResult: true, resDist: rk, resTime: fmtTime(r.sec), goal: p.goalSec ? fmtTime(p.goalSec) : '',
-        days: p.days, longDay: p.longDay, strength: p.strength, mobility: p.mobility, keepStart: true, template: p.template || null };
+        days: p.days, longDay: p.longDay, strength: p.strength, mobility: p.mobility, keepStart: true, template: p.template || null, yoga: p.yoga || 0 };
       render(); window.scrollTo(0, 0); break;
     }
     case 'del-result': state.profile.results.splice(+v, 1); save(); render(); toast('Resultat tret'); break;
@@ -914,6 +1142,21 @@ document.addEventListener('submit', e => {
     const g = id => document.getElementById(id).value.trim();
     state.settings = { ...(state.settings || {}), polarClientId: g('cfgPolar'), worker: g('cfgWorker') };
     save(); render(); toast('Configuració desada');
+  }
+  if (e.target.id === 'crossForm') {
+    const g = id => document.getElementById(id).value;
+    const min = parseInt(g('crMin'), 10);
+    if (!min || min < 1) { toast('Escriu quants minuts has fet.'); return; }
+    const km = parseFloat(String(g('crKm')).replace(',', '.')) || null;
+    const rpe = Math.min(10, Math.max(0, parseInt(g('crRpe'), 10) || 0)) || null;
+    state.cross = [...(state.cross || []), { id: `c${Date.now()}`, kind: g('crKind'), date: g('crDate') || TODAY, min, km, rpe }];
+    save(); render(); toast('Entrenament creuat afegit');
+  }
+  if (e.target.id === 'hrForm') {
+    const v = parseInt(document.getElementById('maxHr').value, 10);
+    if (!v || v < 120 || v > 230) { toast('Escriu una freqüència màxima entre 120 i 230.'); return; }
+    state.settings = { ...(state.settings || {}), maxHr: v };
+    save(); render(); toast('Zones de pulsacions desades');
   }
   if (e.target.id === 'resultForm') {
     const sec = parseTime(document.getElementById('rsTime').value);
