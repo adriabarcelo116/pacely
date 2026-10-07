@@ -36,6 +36,13 @@ const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '
 const kmTxt = x => String(Math.round(x * 10) / 10).replace('.', ',');
 const fmtDate = s => { const d = fromIso(s); return `${DAYS_LONG[dow(d)]} ${d.getDate()} ${MONTHS[d.getMonth()]}`; };
 const fmtShort = s => { const d = fromIso(s); return `${d.getDate()} ${MONTHS[d.getMonth()]}`; };
+// Camp de data propi: es veu un text nostre i el selector natiu queda invisible a sobre,
+// perquè l'amplada del camp natiu de l'iPhone no pugui eixamplar mai la targeta
+const dateTxt = s => { if (!/^\d{4}-\d{2}-\d{2}$/.test(s || '')) return 'Tria una data'; const d = fromIso(s); return `${d.getDate()} ${MONTHS[d.getMonth()]} ${d.getFullYear()}`; };
+const dateField = (id, value, { min, max } = {}) => `<span class="datewrap"><span class="dateshow">${esc(dateTxt(value))}</span><input type="date" class="date-native" id="${id}" value="${esc(value)}"${min ? ` min="${min}"` : ''}${max ? ` max="${max}"` : ''}></span>`;
+for (const ev of ['input', 'change']) document.addEventListener(ev, e => { if (e.target.classList?.contains('date-native')) e.target.previousElementSibling.textContent = dateTxt(e.target.value); });
+// A l'ordinador el selector només s'obre clicant la icona: aquí s'obre clicant on sigui
+document.addEventListener('click', e => { if (e.target.classList?.contains('date-native')) try { e.target.showPicker?.(); } catch { } });
 const zr = r => `${fmtPace(r[0])}–${fmtPace(r[1])}`;
 const dur = sec => { const m = Math.round(sec / 60); return m >= 60 ? `${Math.floor(m / 60)} h ${String(m % 60).padStart(2, '0')} min` : `${m} min`; };
 
@@ -175,7 +182,7 @@ function renderOnboarding() {
     body = `${prog}<h1>Tens una cursa a l'horitzó?</h1>
       <div class="chips"><button class="chip" data-a="ob-set" data-k="hasRace" data-v="1" aria-pressed="${ob.hasRace}">Sí, tinc data</button>
       <button class="chip" data-a="ob-set" data-k="hasRace" data-v="0" aria-pressed="${!ob.hasRace}">No, tria la durada</button></div>
-      ${ob.hasRace ? `<label class="field"><span>Data de la cursa</span><input type="date" id="raceDate" value="${esc(ob.raceDate)}" min="${TODAY}"></label>
+      ${ob.hasRace ? `<label class="field"><span>Data de la cursa</span>${dateField('raceDate', ob.raceDate, { min: TODAY })}</label>
         <label class="field"><span>Nom (opcional)</span><input type="text" id="raceName" value="${esc(ob.raceName)}" placeholder="Ex.: Cursa de la Mercè"></label>`
       : `<label class="field"><span>Durada del pla: <b id="wv">${ob.weeks}</b> setmanes</span><input type="range" id="weeks" min="6" max="26" value="${ob.weeks}"></label>`}
       ${info}${nav('Continua', ob.hasRace && (!ob.raceDate || ob.raceDate <= TODAY))}`;
@@ -553,7 +560,7 @@ function screenAdjust() {
   return `<div class="row"><a href="#avui" class="btn ghost sm">← Avui</a></div>
     <div><h1>No em trobo al 100%</h1><p class="muted">Digues què passa i Pacely canviarà les sessions dels propers dies. Ho pots desfer quan vulguis.</p></div>
     <div class="choices">${Object.entries(ADJUST_INFO).map(([key, i]) => `<button class="choice" data-a="adj-kind" data-v="${key}" aria-pressed="${k === key}"><b>${i.name}</b><span class="small muted">${i.help}</span></button>`).join('')}</div>
-    ${k === 'holiday' ? `<div class="row"><label class="field grow"><span>Des del</span><input type="date" id="hoFrom" value="${esc(ui.hoFrom || TODAY)}" min="${TODAY}"></label><label class="field grow"><span>Fins al</span><input type="date" id="hoTo" value="${esc(ui.hoTo || iso(addDays(fromIso(TODAY), 6)))}" min="${TODAY}"></label></div>
+    ${k === 'holiday' ? `<div class="row"><label class="field grow"><span>Des del</span>${dateField('hoFrom', ui.hoFrom || TODAY, { min: TODAY })}</label><label class="field grow"><span>Fins al</span>${dateField('hoTo', ui.hoTo || iso(addDays(fromIso(TODAY), 6)), { min: TODAY })}</label></div>
       <label class="toggle"><input type="checkbox" id="hoEasy" ${ui.hoEasy ? 'checked' : ''}> Vull fer algun rodatge suau</label>`
     : k && k !== 'break' ? `<div class="field"><span>Durant quants dies, a partir d'avui?</span><div class="chips">${[3, 5, 7, 14].map(n => `<button class="chip" data-a="adj-days" data-v="${n}" aria-pressed="${days === n}">${n} dies</button>`).join('')}</div></div>` : ''}
     <button class="btn block" data-a="adj-apply" ${k ? '' : 'disabled'}>Ajustar el pla</button>
@@ -669,7 +676,7 @@ function crossCard() {
   return `<form class="card" id="crossForm"><span class="label">Entrenament creuat</span>
     <p class="small muted">Bici, natació, el·líptica... Compta per a l'historial i les estadístiques.</p>
     <div class="row"><label class="field grow"><span>Activitat</span><select id="crKind">${Object.entries(CROSS_KINDS).map(([k, n]) => `<option value="${k}">${n}</option>`).join('')}</select></label>
-      <label class="field grow"><span>Data</span><input type="date" id="crDate" value="${TODAY}" max="${TODAY}"></label></div>
+      <label class="field grow"><span>Data</span>${dateField('crDate', TODAY, { max: TODAY })}</label></div>
     <div class="row"><label class="field grow"><span>Minuts</span><input type="number" id="crMin" min="1" inputmode="numeric" placeholder="45"></label>
       <label class="field grow"><span>Km (opcional)</span><input type="number" id="crKm" min="0" step="0.1" inputmode="decimal"></label>
       <label class="field grow"><span>Esforç 1–10</span><input type="number" id="crRpe" min="1" max="10" inputmode="numeric" placeholder="5"></label></div>
@@ -706,7 +713,7 @@ function screenProfile() {
       <p class="small muted">Si has fet una cursa fora del pla, afegeix-la i els ritmes s'actualitzaran.</p>
       <div class="row"><label class="field grow"><span>Distància</span><select id="rsDist">${['5k', '10k', '21k', '42k'].map(k => `<option value="${k}">${DIST[k].name}</option>`).join('')}</select></label>
       <label class="field grow"><span>Temps</span><input class="time" id="rsTime" type="text" placeholder="mm:ss" inputmode="numeric"></label></div>
-      <label class="field"><span>Data</span><input type="date" id="rsDate" value="${TODAY}" max="${TODAY}"></label>
+      <label class="field"><span>Data</span>${dateField('rsDate', TODAY, { max: TODAY })}</label>
       <button class="btn" type="submit">Afegir resultat</button>
       ${(p.results || []).length ? `<div class="list">${p.results.map((r, i) => `<div class="row between"><span>${fmtShort(r.date)} · ${Math.round(r.distM / 100) / 10} km</span><span class="row"><span class="mono">${fmtTime(r.sec)}</span><button type="button" class="btn ghost sm" data-a="del-result" data-v="${i}">Treu</button></span></div>`).join('')}</div>` : ''}</form>
     ${watchCard()}
