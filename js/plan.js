@@ -351,7 +351,10 @@ export function buildPlan(state, todayIso) {
     const sessions = [];
     const add = (dayIdx, s) => {
       const date = iso(addDays(wStart, dayIdx));
-      sessions.push({ ...s, date, id: `${date}-${s.type}` });
+      // Identificador únic encara que hi hagi dues sessions del mateix tipus el mateix dia
+      let id = `${date}-${s.type}`;
+      for (let n = 2; sessions.some(x => x.id === id); n++) id = `${date}-${s.type}-${n}`;
+      sessions.push({ ...s, date, id });
     };
 
     if (tw) {

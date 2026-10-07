@@ -28,7 +28,8 @@ let pressed = null;
 // Recorda el botó que s'acaba de tocar per fer-li el "pop" després de redibuixar
 export function notePress(el) {
   const a = el?.dataset?.a;
-  pressed = a ? `[data-a="${a}"]${el.dataset.v !== undefined ? `[data-v="${CSS.escape(el.dataset.v)}"]` : ''}${el.dataset.k ? `[data-k="${el.dataset.k}"]` : ''}` : null;
+  const attr = (name, val) => (val !== undefined ? `[data-${name}="${CSS.escape(val)}"]` : '');
+  pressed = a ? `[data-a="${CSS.escape(a)}"]${attr('v', el.dataset.v)}${attr('k', el.dataset.k)}${attr('id', el.dataset.id)}` : null;
 }
 
 export function afterRender(route, root) {
@@ -37,14 +38,15 @@ export function afterRender(route, root) {
   lastRoute = route;
   root.classList.toggle('still', !changed);
   const screen = root.firstElementChild;
-  if (document.hidden) { pressed = null; return; } // sense animacions si l'app no es veu
+  // Comptadors i anells sempre anoten el valor actual; si l'app no es veu, no animen res
+  countUp(root);
+  rings(root);
+  if (document.hidden) { pressed = null; return; }
   if (changed && screen) enterScreen(screen, dir);
   if (!changed && pressed && !reduced()) {
     root.querySelector(pressed)?.animate([{ transform: 'scale(0.94)' }, { transform: 'scale(1)' }], { duration: 260, easing: BOUNCE });
   }
   pressed = null;
-  countUp(root);
-  rings(root);
   if (changed) growBars(root);
 }
 
@@ -95,11 +97,15 @@ function countUp(root) {
 function rings(root) {
   for (const svg of root.querySelectorAll('svg.ring')) {
     const prog = svg.querySelector('.ring-p');
+    if (!prog) continue;
     const key = svg.dataset.key || 'ring';
-    const end = +prog.style.strokeDashoffset;
-    if (reduced() || seenRings.has(key + end)) continue;
-    seenRings.add(key + end);
-    prog.animate([{ strokeDashoffset: 100 }, { strokeDashoffset: end }], { duration: 900, easing: EASE_OUT, delay: 120 });
+    const end = parseFloat(prog.style.strokeDashoffset); // pot venir com "65" o "65px"
+    if (!isFinite(end)) continue;
+    const seenKey = `${key}:${end}`;
+    if (seenRings.has(seenKey)) continue;
+    seenRings.add(seenKey);
+    if (reduced() || document.hidden) continue;
+    prog.animate([{ strokeDashoffset: 100 }, { strokeDashoffset: end }], { duration: 900, easing: EASE_OUT, delay: 120, fill: 'backwards' });
   }
 }
 
@@ -140,7 +146,8 @@ export function celebrateDone(label = 'Fet!') {
 
 // Rècord o assoliment: confeti curt amb els colors de l'app (1,3 s)
 export function confetti() {
-  if (reduced() || document.hidden) return;
+  // Un sol confeti alhora (un rècord pot donar també un assoliment al mateix moment)
+  if (reduced() || document.hidden || document.querySelector('canvas.confetti')) return;
   const cs = getComputedStyle(document.documentElement);
   const colors = ['--accent', '--sun', '--ok', '--z-I', '--z-T'].map(v => cs.getPropertyValue(v).trim()).filter(Boolean);
   const c = document.createElement('canvas');

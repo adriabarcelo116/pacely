@@ -1,5 +1,5 @@
 // Funciona sense connexió: serveix l'app des de la memòria cau i l'actualitza en segon pla.
-const CACHE = 'pacely-v11';
+const CACHE = 'pacely-v12';
 const SHELL = ['./', './index.html', './styles.css', './manifest.webmanifest', './js/app.js', './js/plan.js', './js/vdot.js', './js/library.js', './js/sync.js', './js/config.js', './js/gps.js', './js/hr.js', './js/templates.js', './js/coach.js', './js/motion.js', './icons/icon.svg', './icons/icon-192.png', './icons/icon-512.png'];
 
 self.addEventListener('install', e => {
@@ -18,7 +18,7 @@ self.addEventListener('fetch', e => {
       const net = fetch(e.request).then(res => {
         if (res.ok && (new URL(e.request.url).origin === location.origin || e.request.url.includes('fonts.g'))) cache.put(e.request, res.clone());
         return res;
-      }).catch(() => hit);
+      }).catch(() => hit || Response.error());
       return hit || net;
     })
   );

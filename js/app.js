@@ -13,7 +13,7 @@ const KEY = 'pacely:v1';
 const DAYS = ['Dl', 'Dt', 'Dc', 'Dj', 'Dv', 'Ds', 'Dg'];
 const DAYS_LONG = ['dilluns', 'dimarts', 'dimecres', 'dijous', 'divendres', 'dissabte', 'diumenge'];
 const MONTHS = ['gen', 'feb', 'març', 'abr', 'maig', 'juny', 'jul', 'ag', 'set', 'oct', 'nov', 'des'];
-const RUN_TYPES = ['long', 'int', 'fartlek', 'hills', 'tempo', 'easy', 'test', 'race'];
+const RUN_TYPES = ['long', 'int', 'fartlek', 'hills', 'tempo', 'easy', 'runwalk', 'test', 'race'];
 
 function load() {
   try { return { logs: {}, moves: {}, activities: {}, ...JSON.parse(localStorage.getItem(KEY)) }; }
@@ -23,7 +23,14 @@ let state = load();
 const save = () => { try { localStorage.setItem(KEY, JSON.stringify(state)); } catch { toast('No s\'ha pogut desar. Revisa l\'espai del navegador.'); } };
 
 const qs = new URLSearchParams(location.search);
-const TODAY = qs.get('avui') || iso(new Date());
+const FIXED_TODAY = qs.get('avui');
+// "Avui" es recalcula si l'app queda oberta d'un dia per l'altre (l'iPhone la reprèn de la memòria)
+let TODAY = FIXED_TODAY || iso(new Date());
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState !== 'visible' || FIXED_TODAY) return;
+  const now = iso(new Date());
+  if (now !== TODAY) { TODAY = now; render(); }
+});
 const app = document.getElementById('app');
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const kmTxt = x => String(Math.round(x * 10) / 10).replace('.', ',');
@@ -152,7 +159,7 @@ function renderOnboarding() {
   } else if (ob.step === 1) {
     const g = TEMPLATES.girona27;
     body = `${prog}<h1>Per a quina distància t'entrenes?</h1><div class="choices">
-      ${['girona27', 'start5k', 'return'].map(id => { const t = TEMPLATES[id]; return `<button class="choice" data-a="ob-template" data-v="${id}" aria-pressed="${ob.template === id}"><span class="label">Pla preparat</span><b>${t.name}</b><span class="small muted">${t.desc}</span></button>`; }).join('')}
+      ${['girona27', 'start5k', 'return'].filter(id => !TEMPLATES[id].raceDate || TEMPLATES[id].raceDate > TODAY).map(id => { const t = TEMPLATES[id]; return `<button class="choice" data-a="ob-template" data-v="${id}" aria-pressed="${ob.template === id}"><span class="label">Pla preparat</span><b>${t.name}</b><span class="small muted">${t.desc}</span></button>`; }).join('')}
       ${Object.entries(DIST).map(([k, d]) => `<button class="choice" data-a="ob-set" data-k="distance" data-v="${k}" aria-pressed="${!ob.template && ob.distance === k}"><b>${d.name}</b><span class="small muted">${{ '5k': 'Velocitat i primeres curses', '10k': 'Equilibri entre ritme i fons', '21k': 'La més popular: fons amb ritme', '42k': 'Paciència i quilòmetres', '50k': 'Fons llarg i alimentació' }[k]}</span></button>`).join('')}
       </div>${nav()}`;
   } else if (ob.step === 2) {
@@ -212,8 +219,8 @@ function renderOnboarding() {
         ${[0, 1, 2].map(n => `<button class="chip" data-a="ob-set" data-k="yoga" data-v="${n}" aria-pressed="${(ob.yoga || 0) === n}">${n}</button>`).join('')}
       </div></div>
       <label class="toggle"><input type="checkbox" id="mobility" ${ob.mobility ? 'checked' : ''}> Afegir una sessió de mobilitat setmanal</label>
-      ${ob.days.length < minDays ? `<div class="note warn">Tria com a mínim ${minDays} dies.</div>` : ''}
-      ${nav('Continua', ob.days.length < minDays || !longOk)}`;
+      ${ob.days.length < minDays ? `<div class="note warn">${rel ? 'Tria 3 dies.' : `Tria com a mínim ${minDays} dies.`}</div>` : ''}
+      ${nav('Continua', ob.days.length < minDays || (rel && ob.days.length !== 3) || !longOk)}`;
   } else {
     const prof = obProfile();
     const tmp = buildPlan({ profile: prof, logs: {}, moves: {} }, TODAY);
@@ -233,24 +240,27 @@ function renderOnboarding() {
 function obProfile() {
   const fit = obFitness();
   const t = TEMPLATES[ob.template];
+  // En canviar el pla des del Perfil es conserven la dificultat i els canvis de ritme acceptats
+  const keep = ob.keepStart && state.profile ? { difficulty: state.profile.difficulty || 0, paceAdj: state.profile.paceAdj || [] } : {};
   if (t?.relative) {
     const days = [...ob.days].sort((a, b) => a - b);
-    return {
-      template: t.id, distance: '5k', raceDate: null, raceName: '', weeks: t.weeks, startDate: TODAY,
+    const sameTpl = ob.keepStart && state.profile?.template === t.id;
+    return { ...keep,
+      template: t.id, distance: '5k', raceDate: null, raceName: '', weeks: t.weeks, startDate: sameTpl ? state.profile.startDate : TODAY,
       days, longDay: days[days.length - 1], strength: ob.strength, mobility: ob.mobility, yoga: ob.yoga || 0,
       level: ob.level, base: { distM: fit.distM, sec: fit.sec }, goalSec: null,
       results: state.profile?.results || [], createdAt: state.profile?.createdAt || new Date().toISOString(),
     };
   }
   if (t) {
-    return { yoga: ob.yoga || 0,
+    return { ...keep, yoga: ob.yoga || 0,
       template: t.id, distance: t.distance, raceDate: t.raceDate, raceName: t.raceName, weeks: t.weeks, startDate: t.startDate,
       days: t.days, longDay: t.longDay, strength: t.strength, mobility: t.mobility,
       level: ob.level, base: { distM: fit.distM, sec: fit.sec }, goalSec: parseTime(ob.goal) || null,
       results: state.profile?.results || [], createdAt: state.profile?.createdAt || new Date().toISOString(),
     };
   }
-  return {
+  return { ...keep,
     distance: ob.distance, raceDate: ob.hasRace ? ob.raceDate : null, raceName: ob.hasRace ? ob.raceName.trim() : '',
     weeks: ob.weeks, startDate: state.profile?.startDate && ob.keepStart ? state.profile.startDate : TODAY,
     days: [...ob.days].sort((a, b) => a - b), longDay: ob.longDay, strength: ob.strength, mobility: ob.mobility,
@@ -614,7 +624,7 @@ function screenHistory() {
     ${recordsCard()}
     ${statsCard(runLogs, extras)}
     ${crossCard()}
-    <div class="stack"><span class="label">Sessions registrades</span>${logs.length ? logs.map(l => `<a class="sess c-${TYPE_INFO[l.type]?.cls || 'easy'} ${l.status === 'skipped' ? 'done' : ''}" href="#s/${l.id}"><i class="bar"></i><span class="grow"><span class="t">${esc(l.title)}</span><br><span class="meta">${fmtDate(l.date)}${l.status === 'skipped' ? ' · saltada' : `${l.km ? ' · ' + kmTxt(l.km) + ' km' : ''}${l.sec ? ' · ' + fmtTime(l.sec) : ''}${l.sec && l.km ? ' · ' + fmtPace(l.sec / l.km) + '/km' : ''}${l.hr ? ' · ' + l.hr + ' ppm' : ''}${l.rpe ? ' · RPE ' + l.rpe : ''}${l.source ? ' · ' + SRC[l.source] : ''}`}</span></span></a>`).join('') : '<p class="muted">Encara no has registrat cap sessió.</p>'}</div>
+    <div class="stack"><span class="label">Sessions registrades</span>${logs.length ? logs.map(l => `<a class="sess c-${TYPE_INFO[l.type]?.cls || 'easy'} ${l.status === 'skipped' ? 'done' : ''}" href="#s/${l.id}"><i class="bar"></i><span class="grow"><span class="t">${esc(l.title)}</span><br><span class="meta">${fmtDate(l.date)}${l.status === 'skipped' ? ' · saltada' : `${l.km ? ' · ' + kmTxt(l.km) + ' km' : ''}${(l.actSec || l.sec) ? ' · ' + fmtTime(l.actSec || l.sec) : ''}${(l.actSec || l.sec) && l.km ? ' · ' + fmtPace((l.actSec || l.sec) / l.km) + '/km' : ''}${l.hr ? ' · ' + l.hr + ' ppm' : ''}${l.rpe ? ' · RPE ' + l.rpe : ''}${l.source ? ' · ' + SRC[l.source] : ''}`}</span></span></a>`).join('') : '<p class="muted">Encara no has registrat cap sessió.</p>'}</div>
     ${extras.length ? `<div class="stack"><span class="label">Curses fora del pla</span>${extras.map(x => `<div class="sess c-easy"><i class="bar"></i><span class="grow"><span class="t">${esc(x.name || 'Cursa')}</span><br><span class="meta">${fmtDate(x.date)} · ${kmTxt(x.km)} km · ${fmtTime(x.sec)}${x.km ? ' · ' + fmtPace(x.sec / x.km) + '/km' : ''}${x.hr ? ' · ' + x.hr + ' ppm' : ''} · ${SRC[x.source]}</span></span></div>`).join('')}</div>` : ''}`;
 }
 
@@ -673,9 +683,9 @@ function screenProfile() {
     <div class="card"><span class="label">El teu pla</span>
       <div class="row between"><span>Objectiu</span><b>${esc(planName())}</b></div>
       ${p.template ? `<div class="row between"><span>Tipus</span><span class="pill acc">Pla preparat</span></div>` : ''}
-      <div class="row between"><span>Data</span><span>${fmtDate(iso(PLAN.frame.race))}</span></div>
+      <div class="row between"><span>${p.raceDate ? 'Data de la cursa' : 'Final del pla'}</span><span>${fmtDate(iso(PLAN.frame.race))}</span></div>
       <div class="row between"><span>Temps objectiu</span><span class="mono">${p.goalSec ? fmtTime(p.goalSec) : 'sense'}</span></div>
-      <div class="row between"><span>Dies</span><span>${p.days.map(d => DAYS[d]).join(' · ')} (llarga: ${DAYS_LONG[p.longDay]})</span></div>
+      <div class="row between"><span>Dies</span><span>${p.days.map(d => DAYS[d]).join(' · ')}${TEMPLATES[p.template]?.relative ? '' : ` (llarga: ${DAYS_LONG[p.longDay]})`}</span></div>
       <div class="row between"><span>Força / mobilitat</span><span>${p.strength}× · ${p.mobility ? 'sí' : 'no'}</span></div>
       <button class="btn ghost" data-a="edit-plan">Canviar el pla</button>
       <p class="small muted">Si canvies els dies o l'objectiu, el pla es torna a calcular. Els registres que ja tens es conserven.</p></div>
@@ -768,7 +778,8 @@ function exportIcs() {
 function exportCsv() {
   const rows = [['data', 'sessio', 'tipus', 'estat', 'km', 'temps', 'ritme', 'rpe', 'notes']];
   for (const l of Object.values(state.logs).sort((a, b) => a.date.localeCompare(b.date))) {
-    rows.push([l.date, l.title, TYPE_INFO[l.type]?.name || l.type, l.status === 'done' ? 'feta' : 'saltada', l.km || '', l.sec ? fmtTime(l.sec) : '', l.sec && l.km ? fmtPace(l.sec / l.km) : '', l.rpe || '', l.notes || '']);
+    const t = l.actSec || l.sec;
+    rows.push([l.date, l.title, TYPE_INFO[l.type]?.name || l.type, l.status === 'done' ? 'feta' : 'saltada', l.km || '', t ? fmtTime(t) : '', t && l.km ? fmtPace(t / l.km) : '', l.rpe || '', l.notes || '']);
   }
   download('pacely-historial.csv', 'text/csv', rows.map(r => r.map(c => `"${String(c).replace(/"/g, '""')}"`).join(';')).join('\n'));
 }
@@ -930,11 +941,14 @@ function render() {
   document.body.classList.toggle('running', route === 'run');
   const html = route === 'run' ? screenRun(arg) : route === 's' ? screenSession(arg) : route === 'e' ? screenLibItem(arg) : (map[route] || screenToday)();
   app.innerHTML = `<div class="screen stack" style="gap:18px">${html}</div>`;
-  afterRender(location.hash.slice(1) || 'avui', app);
-  if (route === 'pla') document.querySelector('details.week[open]')?.scrollIntoView({ block: 'center' });
+  const routeId = location.hash.slice(1) || 'avui';
+  // Només en entrar al Pla (no a cada redibuix) es porta la setmana actual a la vista
+  if (route === 'pla' && routeId !== ui.lastRoute && ui.planView !== 'month') document.querySelector('details.week[open]')?.scrollIntoView({ block: 'center' });
+  ui.lastRoute = routeId;
+  afterRender(routeId, app);
 }
 
-window.addEventListener('hashchange', () => { ui.draft = null; ui.confirmReset = false; render(); window.scrollTo(0, 0); });
+window.addEventListener('hashchange', () => { ui.draft = null; ui.confirmReset = false; window.scrollTo(0, 0); render(); });
 
 // ---------- Esdeveniments ----------
 document.addEventListener('click', e => {
@@ -955,7 +969,7 @@ document.addEventListener('click', e => {
       // El pla preparat ja té data i dies: de la distància passa a la forma, i de la forma al resum
       {
         const rel = TEMPLATES[ob.template]?.relative;
-        if (ob.step === 4 && rel && ob.days.length < 3) return;
+        if (ob.step === 4 && rel && ob.days.length !== 3) return;
         ob.step = !ob.template ? ob.step + 1 : ob.step === 1 ? (rel ? 4 : 3) : ob.step === 3 ? 5 : ob.step === 4 ? 5 : ob.step + 1;
       }
       renderOnboarding(); window.scrollTo(0, 0); break;
@@ -966,7 +980,8 @@ document.addEventListener('click', e => {
     }
     case 'ob-template': {
       const t = TEMPLATES[v];
-      if (t.relative) Object.assign(ob, { template: t.id, distance: '5k', hasRace: false, raceDate: '', raceName: '', goal: '', ...(t.id === 'start5k' ? { level: 'beg', hasResult: false } : {}) });
+      // Els plans de 3 dies necessiten exactament 3 dies; si n'hi havia més, es proposen dies alterns
+      if (t.relative) Object.assign(ob, { template: t.id, distance: '5k', hasRace: false, raceDate: '', raceName: '', goal: '', ...(ob.days.length !== 3 ? { days: [0, 2, 4] } : {}), ...(t.id === 'start5k' ? { level: 'beg', hasResult: false } : {}) });
       else Object.assign(ob, { template: t.id, distance: t.distance, hasRace: true, raceDate: t.raceDate, raceName: t.raceName, goal: ob.goal || '1:59:00' });
       renderOnboarding(); break;
     }
@@ -979,6 +994,7 @@ document.addEventListener('click', e => {
     }
     case 'ob-day': {
       const d = +v;
+      if (TEMPLATES[ob.template]?.relative && !ob.days.includes(d) && ob.days.length >= 3) { toast('Aquest pla és de 3 dies: treu-ne un abans d\'afegir-ne un altre.'); break; }
       ob.days = ob.days.includes(d) ? ob.days.filter(x => x !== d) : [...ob.days, d].sort((x, y) => x - y);
       if (!ob.days.includes(ob.longDay) && ob.days.length) ob.longDay = ob.days.includes(6) ? 6 : ob.days[ob.days.length - 1];
       renderOnboarding(); break;
@@ -1032,8 +1048,9 @@ document.addEventListener('click', e => {
     case 'cal-day':
       if (ui.moving) {
         const s = findSession(ui.moving);
+        if (!s) { ui.moving = null; render(); break; }
         const ws = s.week.start, we = s.week.end;
-        if (v >= ws && v <= we) { const orig = s.movedFrom || s.date; if (v === orig) delete state.moves[s.id]; else state.moves[s.id] = v; save(); toast(`Sessió moguda al ${fmtDate(v)}`); }
+        if (v >= ws && v <= we && v >= state.profile.startDate) { const orig = s.movedFrom || s.date; if (v === orig) delete state.moves[s.id]; else state.moves[s.id] = v; save(); toast(`Sessió moguda al ${fmtDate(v)}`); }
         else toast('Només la pots moure dins de la mateixa setmana.');
         ui.moving = null;
       } else ui.calDay = v;
@@ -1089,7 +1106,7 @@ document.addEventListener('click', e => {
     case 'theme': state.theme = v || undefined; save(); render(); break;
     case 'reset': ui.confirmReset = true; render(); break;
     case 'reset-no': ui.confirmReset = false; render(); break;
-    case 'reset-yes': state = { logs: {}, moves: {} }; save(); ui.confirmReset = false; ob = null; location.hash = ''; render(); break;
+    case 'reset-yes': state = { logs: {}, moves: {}, activities: {} }; save(); ui.confirmReset = false; ob = null; location.hash = ''; render(); break;
   }
 });
 
@@ -1113,6 +1130,7 @@ document.addEventListener('change', e => {
   if (t.id === 'moveTo') {
     const id = location.hash.split('/')[1];
     const s = findSession(id);
+    if (!s) return;
     const orig = s.movedFrom || s.date;
     if (t.value === orig) delete state.moves[id]; else state.moves[id] = t.value;
     save(); render(); toast(`Sessió moguda al ${fmtDate(t.value)}`);
@@ -1129,7 +1147,7 @@ document.addEventListener('change', e => {
     t.files[0].text().then(txt => {
       const data = JSON.parse(txt);
       if (!data.profile || typeof data.logs !== 'object') throw new Error();
-      state = { logs: {}, moves: {}, ...data }; ob = null; save(); location.hash = '#avui'; render(); toast('Còpia restaurada');
+      state = { logs: {}, moves: {}, activities: {}, ...data }; ob = null; save(); location.hash = '#avui'; render(); toast('Còpia restaurada');
     }).catch(() => toast('Aquest fitxer no és una còpia de Pacely.'));
   }
 });
@@ -1141,6 +1159,7 @@ document.addEventListener('submit', e => {
     const id = location.hash.split('/')[1];
     const s = findSession(id);
     const d = ui.draft;
+    if (!s || !d) { toast('Aquesta sessió ja no és al pla. Torna-ho a provar des del Pla.'); render(); return; }
     const sec = parseTime(d.time);
     if (d.status === 'done' && (s.type === 'test' || s.type === 'race') && !sec) { toast('Escriu el temps per poder recalcular els ritmes.'); return; }
     if (d.status === 'done' && s.km && d.time && !sec) { toast('El temps ha de ser com 45:30 o 1:05:00.'); return; }

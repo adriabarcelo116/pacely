@@ -81,7 +81,9 @@ const RETURN = [
 const relative = (id, name, short, desc, rows, note) => ({
   id, name, short, desc, distance: '5k', raceDate: null, raceName: '', days: null, longDay: null, strength: 0, mobility: false, weeks: rows.length, relative: true,
   week(w, days) {
-    const d = [...(days || [1, 3, 5])].sort((a, b) => a - b).slice(0, 3);
+    // 3 dies separats: si n'hi ha més, el primer, el del mig i l'últim
+    const all = [...(days?.length ? days : [1, 3, 5])].sort((a, b) => a - b);
+    const d = all.length <= 3 ? all : [all[0], all[Math.floor((all.length - 1) / 2)], all[all.length - 1]];
     return { phase: w < rows.length / 2 ? 'base' : w < rows.length - 1 ? 'build' : 'taper', deload: false, note: w === 0 ? note : '', items: rows[w].map((s, i) => [d[i % d.length], s]) };
   },
 });
