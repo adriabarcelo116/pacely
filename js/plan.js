@@ -17,10 +17,16 @@ const circ = (a, b) => { const d = Math.abs(a - b) % 7; return Math.min(d, 7 - d
 
 const TAPER = { '5k': 1, '10k': 1, '21k': 2, '42k': 3, '50k': 3 };
 const TAPER_FRAC = { 1: [0.6], 2: [0.72, 0.5], 3: [0.8, 0.62, 0.45] };
-const PEAK = { '5k': [22, 32, 48], '10k': [26, 38, 56], '21k': [30, 42, 62], '42k': [40, 56, 80], '50k': [45, 62, 90] };
-const MAX_LONG = { '5k': 12, '10k': 16, '21k': 20, '42k': 32, '50k': 34 };
-const LONG_SHARE = { 2: 0.5, 3: 0.4, 4: 0.34, 5: 0.3, 6: 0.27, 7: 0.25 };
+const PEAK = { '5k': [18, 30, 45], '10k': [24, 38, 56], '21k': [30, 42, 62], '42k': [40, 56, 80], '50k': [45, 62, 90] };
+// Tirada llarga màxima segons distància i nivell (com Runna: un principiant de 5K no passa de 8 km)
+const LONG_CAP = { '5k': [8, 10, 12], '10k': [12, 14, 16], '21k': [18, 20, 22], '42k': [30, 32, 34], '50k': [32, 34, 36] };
+const LONG_STEP = { '5k': 1, '10k': 1, '21k': 1.5, '42k': 2, '50k': 2 };
+// Part màxima del volum setmanal que pot ser la tirada llarga, segons els dies de córrer
+const LONG_MAX_SHARE = { 2: 0.6, 3: 0.5, 4: 0.45, 5: 0.4, 6: 0.36, 7: 0.33 };
 const LI = { beg: 0, int: 1, adv: 2 };
+// Volum actual per defecte si no se sap: [km per setmana, tirada més llarga del darrer mes]
+export const CUR_DEFAULT = { beg: [10, 4], int: [20, 7], adv: [35, 12] };
+const WARM = [1, 1.5, 2], COOL = [0.5, 1, 1];
 
 export const PHASES = {
   base: { name: 'Base', color: '--ph-base' },
@@ -86,21 +92,22 @@ function mk(type, title, steps, note) {
 // ---------- Sessions ----------
 
 function intervalSession(c) {
-  const { phase, deload, vol, dist, level, wInPhase } = c;
+  const { phase, deload, vol, dist, level, wInPhase, warm, cool } = c;
+  const beg = level === 'beg';
   if (deload && (phase === 'base' || phase === 'build')) {
-    const n = level === 'beg' ? 6 : 8;
+    const n = beg ? 6 : 8;
     return mk('hills', `Pujades ${n} × 45 s`, [
-      { k: 'warm', km: 2, z: 'E' },
+      { k: 'warm', km: warm, z: 'E' },
       { k: 'hill', n, sec: 45, label: `${n} × 45 s pujant fort, baixada trotant` },
-      { k: 'cool', km: 1, z: 'E' },
+      { k: 'cool', km: cool, z: 'E' },
     ], 'Busca una pujada del 4–6 %. Força i tècnica sense castigar les cames.');
   }
-  if (phase === 'base' && level === 'beg') {
-    const n = clamp(Math.round(vol / 3), 6, 12);
+  if (phase === 'base' && beg) {
+    const n = clamp(Math.round(vol / 2), 5, 10);
     return mk('fartlek', `Fartlek ${n} × 1 min`, [
-      { k: 'warm', km: 2, z: 'E' },
+      { k: 'warm', km: warm, z: 'E' },
       { k: 'fart', n, label: `${n} × (1 min ràpid / 1 min suau)`, z: 'I' },
-      { k: 'cool', km: 1, z: 'E' },
+      { k: 'cool', km: cool, z: 'E' },
     ], 'El tram ràpid ha de ser alegre però controlat.');
   }
   const short = dist === '5k' || dist === '10k';
@@ -113,7 +120,7 @@ function intervalSession(c) {
   };
   const list = lists[phase];
   const rep = list[wInPhase % list.length];
-  let work = clamp(vol * (short ? 0.16 : 0.14), 2.4, 8);
+  let work = clamp(vol * (short ? 0.16 : 0.14), beg ? 1.6 : 2.4, 8);
   if (phase === 'taper') work *= 0.6;
   if (deload) work *= 0.7;
   const n = clamp(Math.round(work / rep), 3, 16);
@@ -121,16 +128,16 @@ function intervalSession(c) {
   const rec = rep <= 0.4 ? 75 : rep <= 0.8 ? 105 : 135;
   const repTxt = rep < 1 ? `${rep * 1000} m` : `${String(rep).replace('.', ',')} km`;
   return mk('int', `Sèries ${n} × ${repTxt}`, [
-    { k: 'warm', km: 2, z: 'E', strides: 4 },
+    { k: 'warm', km: warm, z: 'E', ...(beg ? {} : { strides: 4 }) },
     { k: 'rep', n, km: rep, z, rec },
-    { k: 'cool', km: 1, z: 'E' },
+    { k: 'cool', km: cool, z: 'E' },
   ], 'Recuperació trotant suau. Si l\'última repetició és clarament més lenta, para una abans.');
 }
 
 function tempoSession(c) {
-  const { phase, deload, vol, dist, level } = c;
+  const { phase, deload, vol, dist, level, warm, cool } = c;
   if (phase === 'base' && level === 'beg') {
-    const km = r05(clamp(vol * 0.22, 4, 8));
+    const km = r05(clamp(vol * 0.25, 3, 6));
     const fast = r05(km / 3);
     return mk('tempo', `Progressiu ${String(km).replace('.', ',')} km`, [
       { k: 'run', km: km - fast, z: 'E' },
@@ -141,14 +148,14 @@ function tempoSession(c) {
   if (long && (phase === 'spec' || phase === 'peak') && !deload) {
     const km = r05(clamp(vol * 0.2, 6, 16));
     return mk('tempo', `Ritme marató ${String(km).replace('.', ',')} km`, [
-      { k: 'warm', km: 2, z: 'E' },
+      { k: 'warm', km: warm, z: 'E' },
       { k: 'run', km, z: 'M' },
-      { k: 'cool', km: 1, z: 'E' },
+      { k: 'cool', km: cool, z: 'E' },
     ], 'Practica el ritme i l\'avituallament de cursa.');
   }
-  let work = r05(clamp(vol * 0.16, 3, long ? 12 : 9));
+  let work = r05(clamp(vol * 0.16, level === 'beg' ? 2 : 3, long ? 12 : 9));
   if (deload) work = r05(work * 0.6);
-  if (phase === 'taper') work = r05(Math.max(3, work * 0.6));
+  if (phase === 'taper') work = r05(Math.max(2, work * 0.6));
   let steps, title;
   if (deload || phase === 'spec' || phase === 'taper') {
     steps = [{ k: 'run', km: work, z: 'T' }];
@@ -159,21 +166,22 @@ function tempoSession(c) {
     steps = [{ k: 'rep', n, km: each, z: 'T', rec: phase === 'peak' ? 60 : phase === 'build' ? 90 : 120 }];
     title = `Tempo ${n} × ${String(each).replace('.', ',')} km`;
   }
-  return mk('tempo', title, [{ k: 'warm', km: 2, z: 'E' }, ...steps, { k: 'cool', km: 1, z: 'E' }],
+  return mk('tempo', title, [{ k: 'warm', km: warm, z: 'E' }, ...steps, { k: 'cool', km: cool, z: 'E' }],
     'Ritme constant de principi a final. Has d\'acabar amb sensació de control.');
 }
 
 function longSession(c) {
-  const { phase, deload, dist, longKm } = c;
-  const km = Math.round(clamp(longKm, 5, MAX_LONG[dist]));
+  const { phase, deload, dist, longKm, level } = c;
+  const km = Math.round(clamp(longKm, 3, LONG_CAP[dist][LI[level]]));
   const rpZone = dist === '42k' || dist === '50k' ? 'M' : 'RP';
   const short = dist === '5k' || dist === '10k';
-  if (phase === 'base' || deload) {
+  // Els principiants fan la tirada llarga sempre suau; i si és curta, no té sentit afegir-hi ritme
+  if (phase === 'base' || deload || level === 'beg' || km < 6) {
     return mk('long', `Tirada llarga ${km} km`, [{ k: 'run', km, z: 'E' }],
       deload ? 'Setmana de descàrrega: tot suau.' : 'A ritme conversacional. L\'objectiu és temps de peus.');
   }
   if (phase === 'build' || short) {
-    const fast = short ? 2 : Math.max(2, Math.round(km * 0.2));
+    const fast = short ? (km >= 8 ? 2 : 1) : Math.max(2, Math.round(km * 0.2));
     return mk('long', `Tirada llarga ${km} km (${fast} finals a ritme)`, [
       { k: 'run', km: km - fast, z: 'E' },
       { k: 'run', km: fast, z: short ? 'M' : rpZone },
@@ -205,12 +213,12 @@ function easySession(km, strides) {
   return mk('easy', `Rodatge ${km} km${strides ? ' + rectes' : ''}`, steps, 'Suau de debò. Si dubtes, més lent.');
 }
 
-function testSession(distM) {
+function testSession(distM, c) {
   const k = distM / 1000;
   return Object.assign(mk('test', `Test ${k}K a fons`, [
-    { k: 'warm', km: 2, z: 'E', strides: 4 },
+    { k: 'warm', km: c.warm, z: 'E', ...(c.level === 'beg' ? {} : { strides: 4 }) },
     { k: 'run', km: k, z: 'TEST', label: `${k} km a fons en pla` },
-    { k: 'cool', km: 1, z: 'E' },
+    { k: 'cool', km: c.cool, z: 'E' },
   ], 'Registra el temps exacte: els ritmes de les setmanes següents es recalcularan.'), { distM });
 }
 
@@ -286,8 +294,18 @@ export function buildPlan(state, todayIso) {
   const li = LI[p.level];
   const days = [...p.days].sort((a, b) => a - b);
   const daysN = days.length;
-  const peakVol = Math.min(PEAK[p.distance][li], daysN * [10, 13, 16][li]);
-  const startVol = peakVol * [0.5, 0.6, 0.65][li];
+  // Com Runna: el punt de partida és el que ja corres (km per setmana i tirada més llarga),
+  // i el volum puja a poc a poc a partir d'aquí, amb un sostre segons distància, nivell i dies.
+  const [defKm, defLong] = CUR_DEFAULT[p.level] || CUR_DEFAULT.int;
+  const curKm = clamp(Number.isFinite(p.curKm) ? p.curKm : defKm, 0, 200);
+  const curLong = clamp(Number.isFinite(p.curLong) ? p.curLong : defLong, 0, 45);
+  const startVol = Math.max(daysN * 3, curKm);
+  const growth = Math.min(2.2, 1 + 0.1 * Math.max(1, frame.pre - 1));
+  const peakVol = clamp(Math.min(PEAK[p.distance][li], daysN * [10, 13, 16][li]), startVol, startVol * growth);
+  const longCap = LONG_CAP[p.distance][li];
+  let longNow = clamp(Math.round(curLong), 3, longCap), longPeak = longNow;
+  const warm = WARM[li], cool = COOL[li];
+  const nQuality = daysN === 2 || p.level === 'beg' ? 1 : 2;
   const others = days.filter(d => d !== p.longDay);
   const byFar = [...others].sort((a, b) => circ(b, p.longDay) - circ(a, p.longDay) || a - b);
   const startIso = p.startDate;
@@ -305,7 +323,7 @@ export function buildPlan(state, todayIso) {
   const events = [];
   const vdotHist = [];
   const weeks = [];
-  let progIdx = 0, testCount = 0, lastLong = 0, pi = 0;
+  let progIdx = 0, testCount = 0, pi = 0;
   const paceAdj = [...(p.paceAdj || [])].sort((a, b) => a.date.localeCompare(b.date));
   const DIFF = { '-1': [0.85, -0.6], 0: [1, 0], 1: [1.12, 0.4] }[p.difficulty || 0];
 
@@ -347,7 +365,7 @@ export function buildPlan(state, todayIso) {
     const z = zones(vdot + DIFF[1], racePace);
     vdotHist.push({ week: w, date: wStartIso, vdot });
 
-    const ctx = { phase, deload, vol, dist: p.distance, level: p.level, daysN, wInPhase };
+    const ctx = { phase, deload, vol, dist: p.distance, level: p.level, daysN, wInPhase, warm, cool };
     const sessions = [];
     const add = (dayIdx, s) => {
       const date = iso(addDays(wStart, dayIdx));
@@ -378,12 +396,15 @@ export function buildPlan(state, todayIso) {
       const raceDow = dow(frame.race);
       const before = days.filter(d => d < raceDow - 1);
       const pre = before.slice(-2);
+      const short = p.distance === '5k' || p.distance === '10k';
       pre.forEach((d, i) => {
         if (i === 0 && pre.length === 2) {
-          add(d, mk('easy', 'Activació amb ritme de cursa', [
+          add(d, mk('easy', 'Activació amb ritme de cursa', short ? [
+            { k: 'run', km: 1.5, z: 'E' }, { k: 'rep', n: 4, km: 0.2, z: 'RP', rec: 60 }, { k: 'run', km: 1, z: 'E' },
+          ] : [
             { k: 'run', km: 3, z: 'E' }, { k: 'rep', n: 3, km: 1, z: p.distance === '42k' || p.distance === '50k' ? 'M' : 'RP', recKm: 0.5 }, { k: 'run', km: 2, z: 'E' },
           ], 'Recordatori del ritme, sense cansar-te.'));
-        } else add(d, easySession(5, true));
+        } else add(d, easySession(short ? 3 : 5, p.level !== 'beg'));
       });
       add(raceDow, Object.assign(mk('race', p.raceName || D.long, [{ k: 'run', km: Math.round(D.m / 100) / 10, z: 'RP', label: 'Cursa' }],
         'Surt uns segons més lent del ritme objectiu els primers quilòmetres.'), { distM: D.m }));
@@ -391,23 +412,23 @@ export function buildPlan(state, todayIso) {
       const testHere = deload && (phase === 'base' || phase === 'build') && w > 0;
       const testDist = p.distance === '5k' || p.distance === '10k' || testCount % 2 === 0 ? 5000 : 10000;
       if (testHere) testCount++;
-      // Amb pocs dies la tirada llarga absorbeix el volum que queda; amb més dies, els rodatges.
+      // Principiants i plans de 2 dies: una sola sessió de qualitat (alterna sèries i tempo); la resta, suau.
       const quality = [];
-      if (daysN === 2) quality.push([byFar[0], testHere ? testSession(testDist) : w % 2 === 0 ? tempoSession(ctx) : intervalSession(ctx)]);
-      else {
-        quality.push([byFar[0], testHere ? testSession(testDist) : tempoSession(ctx)]);
-        quality.push([byFar[1], intervalSession(ctx)]);
-      }
+      quality.push([byFar[0], testHere ? testSession(testDist, ctx) : nQuality === 2 ? tempoSession(ctx) : w % 2 === 0 ? intervalSession(ctx) : tempoSession(ctx)]);
+      if (nQuality === 2) quality.push([byFar[1], intervalSession(ctx)]);
       const qKm = quality.reduce((a, [, s]) => a + s.km, 0);
-      const easyDays = byFar.slice(2);
-      let longKm = daysN <= 3 ? vol - qKm : vol * (LONG_SHARE[daysN] || 0.3);
-      if (deload) longKm = Math.max(longKm, lastLong * 0.7);
+      const easyDays = byFar.slice(quality.length);
+      // La tirada llarga parteix de la més llarga que ja fas i creix com a molt un esglaó per setmana
+      let longKm;
+      if (phase === 'taper') longKm = longPeak * (TAPER_FRAC[frame.taper][w - frame.pre] ?? 0.6);
+      else if (deload) longKm = longNow * 0.7;
+      else { longKm = longNow; longPeak = Math.max(longPeak, longNow); longNow = Math.min(longCap, longNow + LONG_STEP[p.distance]); }
+      longKm = Math.min(longKm, Math.max(3, vol * (LONG_MAX_SHARE[daysN] || 0.33)));
       const L = longSession({ ...ctx, longKm });
-      lastLong = L.km;
       add(p.longDay, L);
       quality.forEach(([d, s]) => add(d, s));
       const rest = vol - L.km - qKm;
-      easyDays.forEach((d, i) => add(d, easySession(rest / easyDays.length, i === 0)));
+      easyDays.forEach((d, i) => add(d, easySession(rest / easyDays.length, i === 0 && p.level !== 'beg')));
     }
 
     // Força i mobilitat (el pla preparat ja les porta)

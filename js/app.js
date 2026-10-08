@@ -1,5 +1,5 @@
 import { vdotFrom, predict, zones, DIST, LEVEL_5K, fmtPace, fmtTime, parseTime } from './vdot.js';
-import { buildPlan, planFrame, PHASES, iso, fromIso, addDays, dow, monday, estSeconds, stepsKm, ADJUST_INFO } from './plan.js';
+import { buildPlan, planFrame, PHASES, iso, fromIso, addDays, dow, monday, estSeconds, stepsKm, ADJUST_INFO, CUR_DEFAULT } from './plan.js';
 import { ROUTINES, ZONE_INFO, TYPE_INFO, CROSS_KINDS } from './library.js';
 import { connCfg, authUrl, handleRedirect, syncPolar, fetchBestEffort, parseActivityFile, matchActivities, logFor } from './sync.js';
 import { Recorder, buildSegments, toGpx } from './gps.js';
@@ -133,10 +133,12 @@ function tabs(active) {
 }
 
 // ---------- Onboarding ----------
+// Valors de partida neutres i prudents: qui comparteixi l'app no ha d'heretar el pla d'un altre
 const defaults = () => ({
-  step: 0, distance: '21k', hasRace: true, raceDate: '2027-02-28', raceName: 'Mitja Marató de Girona', weeks: 12,
-  level: 'int', hasResult: true, resDist: '5k', resTime: '28:00', goal: '1:59:00',
-  days: [1, 3, 5], longDay: 1, strength: 2, mobility: true,
+  step: 0, distance: '5k', hasRace: false, raceDate: '', raceName: '', weeks: 8,
+  level: 'beg', hasResult: false, resDist: '5k', resTime: '', goal: '',
+  curKm: CUR_DEFAULT.beg[0], curLong: CUR_DEFAULT.beg[1], curTouched: false,
+  days: [1, 3, 5], longDay: 5, strength: 1, mobility: false,
 });
 let ob = null;
 
@@ -201,6 +203,9 @@ function renderOnboarding() {
       <div class="field"><span>Experiència</span><div class="chips">
         ${[['beg', 'Començo'], ['int', 'Corro sovint'], ['adv', 'Entreno fort']].map(([k, n]) => `<button class="chip" data-a="ob-set" data-k="level" data-v="${k}" aria-pressed="${ob.level === k}">${n}</button>`).join('')}
       </div></div>
+      ${ob.template ? '' : `<div class="row"><label class="field grow"><span>Km per setmana ara</span><input type="number" id="curKm" inputmode="decimal" min="0" max="200" step="1" value="${esc(ob.curKm)}"></label>
+        <label class="field grow"><span>Tirada més llarga</span><input type="number" id="curLong" inputmode="decimal" min="0" max="45" step="1" value="${esc(ob.curLong)}"></label></div>
+      <p class="small muted">Mitjana de les últimes 4 setmanes i la sortida més llarga del darrer mes, en km. Sigues prudent: el pla comença aquí i puja a poc a poc.</p>`}
       <div class="chips"><button class="chip" data-a="ob-set" data-k="hasResult" data-v="1" aria-pressed="${ob.hasResult}">Tinc una marca recent</button>
       <button class="chip" data-a="ob-set" data-k="hasResult" data-v="0" aria-pressed="${!ob.hasResult}">No en tinc</button></div>
       ${ob.hasResult ? `<div class="row"><label class="field grow"><span>Distància</span><select id="resDist">${['5k', '10k', '21k', '42k'].map(k => `<option value="${k}" ${ob.resDist === k ? 'selected' : ''}>${DIST[k].name}</option>`).join('')}</select></label>
@@ -272,6 +277,7 @@ function obProfile() {
     weeks: ob.weeks, startDate: state.profile?.startDate && ob.keepStart ? state.profile.startDate : TODAY,
     days: [...ob.days].sort((a, b) => a - b), longDay: ob.longDay, strength: ob.strength, mobility: ob.mobility,
     level: ob.level, base: { distM: fit.distM, sec: fit.sec }, goalSec: parseTime(ob.goal) || null, yoga: ob.yoga || 0,
+    curKm: ob.curKm, curLong: ob.curLong,
     results: state.profile?.results || [], createdAt: state.profile?.createdAt || new Date().toISOString(),
   };
 }
@@ -286,6 +292,11 @@ function readObInputs() {
   if (v('goal')) ob.goal = v('goal').value;
   if (v('longDay')) ob.longDay = +v('longDay').value;
   if (v('mobility')) ob.mobility = v('mobility').checked;
+  for (const k of ['curKm', 'curLong']) {
+    if (!v(k)) continue;
+    const n = parseFloat(String(v(k).value).replace(',', '.'));
+    if (Number.isFinite(n) && n >= 0 && n !== ob[k]) { ob[k] = n; ob.curTouched = true; }
+  }
 }
 
 // ---------- Components ----------
@@ -997,7 +1008,10 @@ document.addEventListener('click', e => {
       let val = v;
       if (k === 'hasRace' || k === 'hasResult') val = v === '1';
       if (k === 'strength' || k === 'yoga') val = +v;
-      ob[k] = val; renderOnboarding(); break;
+      ob[k] = val;
+      // Si encara no has escrit el teu volum, es proposa el típic del nivell triat
+      if (k === 'level' && !ob.curTouched) [ob.curKm, ob.curLong] = CUR_DEFAULT[val];
+      renderOnboarding(); break;
     }
     case 'ob-day': {
       const d = +v;
@@ -1103,7 +1117,8 @@ document.addEventListener('click', e => {
       const rk = Object.keys(DIST).find(x => Math.abs(DIST[x].m - r.distM) < 1) || '5k';
       ob = { ...defaults(), step: 1, distance: p.distance, hasRace: !!p.raceDate, raceDate: p.raceDate || '', raceName: p.raceName || '', weeks: p.weeks || 12,
         level: p.level, hasResult: true, resDist: rk, resTime: fmtTime(r.sec), goal: p.goalSec ? fmtTime(p.goalSec) : '',
-        days: p.days, longDay: p.longDay, strength: p.strength, mobility: p.mobility, keepStart: true, template: p.template || null, yoga: p.yoga || 0 };
+        days: p.days, longDay: p.longDay, strength: p.strength, mobility: p.mobility, keepStart: true, template: p.template || null, yoga: p.yoga || 0,
+        curKm: p.curKm ?? (CUR_DEFAULT[p.level] || CUR_DEFAULT.int)[0], curLong: p.curLong ?? (CUR_DEFAULT[p.level] || CUR_DEFAULT.int)[1], curTouched: true };
       render(); window.scrollTo(0, 0); break;
     }
     case 'del-result': state.profile.results.splice(+v, 1); save(); render(); toast('Resultat tret'); break;
